@@ -24,4 +24,12 @@ double MarketData::year_fraction_to(DateTime date) const {
     return year_fraction(pricing_date_, date, day_count_convention_);
 }
 
+MarketData MarketData::with_pricing_date(DateTime pricing_date) const {
+    return {pricing_date, discount_curve_, currency_, day_count_convention_};
+}
+
+MarketData MarketData::with_discount_curve(DiscountCurve discount_curve) const {
+    return {pricing_date_, std::move(discount_curve), currency_, day_count_convention_};
+}
+
 }  // namespace dp

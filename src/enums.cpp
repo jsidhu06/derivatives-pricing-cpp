@@ -154,4 +154,46 @@ std::string_view to_string(RebateTiming value) noexcept {
     return "unknown";
 }
 
+std::string_view name(PricingMethod value) noexcept {
+    switch (value) {
+        case PricingMethod::Bsm:
+            return "BSM";
+        case PricingMethod::Binomial:
+            return "BINOMIAL";
+        case PricingMethod::PdeFd:
+            return "PDE_FD";
+        case PricingMethod::MonteCarlo:
+            return "MONTE_CARLO";
+    }
+    return "UNKNOWN";
+}
+
+std::string_view name(ExerciseType value) noexcept {
+    switch (value) {
+        case ExerciseType::European:
+            return "EUROPEAN";
+        case ExerciseType::American:
+            return "AMERICAN";
+    }
+    return "UNKNOWN";
+}
+
+std::string_view name(GreekCalculationMethod value) noexcept {
+    switch (value) {
+        case GreekCalculationMethod::Analytical:
+            return "ANALYTICAL";
+        case GreekCalculationMethod::Tree:
+            return "TREE";
+        case GreekCalculationMethod::Grid:
+            return "GRID";
+        case GreekCalculationMethod::Pathwise:
+            return "PATHWISE";
+        case GreekCalculationMethod::LikelihoodRatio:
+            return "LIKELIHOOD_RATIO";
+        case GreekCalculationMethod::Numerical:
+            return "NUMERICAL";
+    }
+    return "UNKNOWN";
+}
+
 }  // namespace dp

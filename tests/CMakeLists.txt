@@ -2,6 +2,7 @@ include(Catch)
 
 add_executable(
     dp_tests
+    test_contracts.cpp
     test_dates.cpp
     test_diagnostics.cpp
     test_discount_curve.cpp
@@ -9,6 +10,10 @@ add_executable(
     test_enums.cpp
     test_market_data.cpp
     test_normal.cpp
+    test_params.cpp
+    test_underlying.cpp
+    test_valuation_bsm.cpp
+    test_valuation_facade.cpp
 )
 
 target_link_libraries(dp_tests PRIVATE dp::derivatives_pricing Catch2::Catch2WithMain)

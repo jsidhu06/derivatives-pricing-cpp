@@ -29,6 +29,11 @@ public:
     /// day-count convention.
     [[nodiscard]] double year_fraction_to(DateTime date) const;
 
+    /// Copy with a different pricing date (curve and currency unchanged).
+    [[nodiscard]] MarketData with_pricing_date(DateTime pricing_date) const;
+    /// Copy with a different discount curve.
+    [[nodiscard]] MarketData with_discount_curve(DiscountCurve discount_curve) const;
+
 private:
     DateTime pricing_date_;
     DiscountCurve discount_curve_;

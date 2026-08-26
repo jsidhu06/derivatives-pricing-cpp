@@ -53,14 +53,19 @@ configure_file(
 
 target_sources(
     derivatives_pricing
-    PRIVATE src/dates.cpp
+    PRIVATE src/contracts.cpp
+            src/dates.cpp
             src/diagnostics.cpp
             src/discount_curve.cpp
             src/dividends.cpp
+            src/engines/bsm.cpp
             src/enums.cpp
             src/forward.cpp
             src/market_data.cpp
             src/math/normal.cpp
+            src/params.cpp
+            src/underlying.cpp
+            src/valuation.cpp
 )
 
 target_include_directories(

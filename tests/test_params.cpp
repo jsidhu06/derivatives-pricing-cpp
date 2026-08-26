@@ -1,0 +1,102 @@
+#include "dp/enums.hpp"
+#include "dp/exceptions.hpp"
+#include "dp/params.hpp"
+
+#include "test_helpers.hpp"
+
+#include <catch2/catch_test_macros.hpp>
+
+using namespace dp;
+using dp::test::message_contains;
+
+TEST_CASE("default params validate", "[params]") {
+    CHECK_NOTHROW(MonteCarloParams{}.validate());
+    CHECK_NOTHROW(BinomialParams{}.validate());
+    CHECK_NOTHROW(PdeParams{}.validate());
+    CHECK(BinomialParams{}.num_steps == 500);
+    CHECK(PdeParams{}.method == PdeMethod::CrankNicolson);
+    CHECK(MonteCarloParams{}.random_seed == 42ULL);
+}
+
+TEST_CASE("MonteCarloParams validation", "[params]") {
+    CHECK_THROWS_MATCHES(MonteCarloParams{.deg = 0}.validate(),
+                         ValidationError,
+                         message_contains("deg must be >= 1"));
+    CHECK_THROWS_MATCHES(MonteCarloParams{.ridge_lambda = -1e-3}.validate(),
+                         ValidationError,
+                         message_contains("ridge_lambda must be >= 0"));
+    CHECK_THROWS_MATCHES(MonteCarloParams{.min_itm = 0}.validate(),
+                         ValidationError,
+                         message_contains("min_itm must be >= 1"));
+    CHECK_THROWS_MATCHES(MonteCarloParams{.std_error_warn_ratio = 0.0}.validate(),
+                         ValidationError,
+                         message_contains("std_error_warn_ratio must be > 0"));
+    CHECK_NOTHROW(MonteCarloParams{.std_error_warn_ratio = std::nullopt}.validate());
+}
+
+TEST_CASE("BinomialParams validation", "[params]") {
+    CHECK_THROWS_MATCHES(BinomialParams{.num_steps = 0}.validate(),
+                         ValidationError,
+                         message_contains("num_steps must be >= 1"));
+    CHECK_THROWS_MATCHES((BinomialParams{.mc_paths = 10, .asian_tree_averages = 10}.validate()),
+                         ValidationError,
+                         message_contains("Only one of"));
+    CHECK_THROWS_MATCHES(BinomialParams{.mc_paths = 0}.validate(),
+                         ValidationError,
+                         message_contains("mc_paths must be >= 1"));
+    CHECK_THROWS_MATCHES(BinomialParams{.asian_tree_averages = 0}.validate(),
+                         ValidationError,
+                         message_contains("asian_tree_averages must be >= 1"));
+}
+
+TEST_CASE("BinomialParams warns on poor Asian average ratio", "[params]") {
+    const dp::test::WarningCapture capture;
+    BinomialParams{.num_steps = 100, .asian_tree_averages = 50}.validate();
+    CHECK(capture.any_contains("< 1.5"));
+    BinomialParams{.num_steps = 100, .asian_tree_averages = 400}.validate();
+    CHECK(capture.any_contains("large relative to num_steps"));
+}
+
+TEST_CASE("PdeParams validation", "[params]") {
+    CHECK_THROWS_MATCHES(PdeParams{.smax_mult = 0.0}.validate(),
+                         ValidationError,
+                         message_contains("smax_mult must be positive"));
+    CHECK_THROWS_MATCHES(PdeParams{.spot_steps = 2}.validate(),
+                         ValidationError,
+                         message_contains("spot_steps must be >= 3"));
+    CHECK_THROWS_MATCHES(PdeParams{.time_steps = 0}.validate(),
+                         ValidationError,
+                         message_contains("time_steps must be >= 1"));
+    CHECK_THROWS_MATCHES(PdeParams{.omega = 1.0}.validate(),
+                         ValidationError,
+                         message_contains("omega must be in (1.0, 2.0)"));
+    CHECK_THROWS_MATCHES(PdeParams{.omega = 2.0}.validate(),
+                         ValidationError,
+                         message_contains("omega must be in (1.0, 2.0)"));
+    CHECK_THROWS_MATCHES(PdeParams{.tol = 0.0}.validate(),
+                         ValidationError,
+                         message_contains("tol must be positive"));
+    CHECK_THROWS_MATCHES(PdeParams{.max_iter = 0}.validate(),
+                         ValidationError,
+                         message_contains("max_iter must be >= 1"));
+    CHECK_THROWS_MATCHES(PdeParams{.rannacher_steps = -1}.validate(),
+                         ValidationError,
+                         message_contains("rannacher_steps must be >= 0"));
+}
+
+TEST_CASE("PdeParams::for_barriers picks scheme from monitoring", "[params]") {
+    const auto cont = PdeParams::for_barriers(BarrierMonitoring::Continuous);
+    CHECK(cont.method == PdeMethod::CrankNicolson);
+    CHECK(cont.space_grid == PdeSpaceGrid::LogSpot);
+    CHECK(cont.spot_steps == 1200);
+    CHECK(cont.time_steps == 800);
+    CHECK(cont.american_solver == PdeEarlyExercise::GaussSeidel);
+
+    const auto disc = PdeParams::for_barriers(BarrierMonitoring::Discrete);
+    CHECK(disc.method == PdeMethod::ExplicitHull);
+    CHECK(disc.space_grid == PdeSpaceGrid::LogSpot);
+    CHECK(disc.spot_steps == 1200);
+    CHECK(disc.time_steps == 3000);
+    CHECK(disc.american_solver == PdeEarlyExercise::Intrinsic);
+    CHECK_NOTHROW(disc.validate());
+}

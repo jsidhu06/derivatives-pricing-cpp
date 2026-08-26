@@ -69,4 +69,10 @@ enum class RebateTiming { AtHit, AtExpiry };
 [[nodiscard]] std::string_view to_string(BarrierMonitoring value) noexcept;
 [[nodiscard]] std::string_view to_string(RebateTiming value) noexcept;
 
+/// Upper-case identifier (`BSM`, `PDE_FD`, `MONTE_CARLO`, ...) matching the
+/// Python reference library's `Enum.name`. Used in diagnostics.
+[[nodiscard]] std::string_view name(PricingMethod value) noexcept;
+[[nodiscard]] std::string_view name(ExerciseType value) noexcept;
+[[nodiscard]] std::string_view name(GreekCalculationMethod value) noexcept;
+
 }  // namespace dp

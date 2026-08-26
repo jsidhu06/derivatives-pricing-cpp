@@ -4,10 +4,13 @@
 #include "dp/diagnostics.hpp"
 #include "dp/discount_curve.hpp"
 
+#include <catch2/catch_tostring.hpp>
+#include <catch2/matchers/catch_matchers.hpp>
 #include <catch2/matchers/catch_matchers_exception.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <memory>
 #include <string>
 #include <vector>
@@ -62,6 +65,36 @@ private:
 /// Matcher for `REQUIRE_THROWS_MATCHES`: exception message contains `needle`.
 inline auto message_contains(const std::string& needle) {
     return Catch::Matchers::MessageMatches(Catch::Matchers::ContainsSubstring(needle));
+}
+
+/// Owning "relative tolerance with an absolute floor" matcher.
+///
+/// Catch2's `WithinRel(x) || WithinAbs(x)` stores *references* to its
+/// operands, so it cannot be returned from a helper; this matcher owns its
+/// state and can be.
+class CloseToMatcher final : public Catch::Matchers::MatcherBase<double> {
+public:
+    CloseToMatcher(double expected, double rel, double abs)
+        : expected_(expected), rel_(rel), abs_(abs) {}
+
+    bool match(const double& actual) const override {
+        const double diff = std::abs(actual - expected_);
+        return diff <= abs_ || diff <= rel_ * std::max(std::abs(actual), std::abs(expected_));
+    }
+
+    std::string describe() const override {
+        return "is within rel " + std::to_string(rel_) + " or abs " + std::to_string(abs_) +
+               " of " + Catch::StringMaker<double>::convert(expected_);
+    }
+
+private:
+    double expected_;
+    double rel_;
+    double abs_;
+};
+
+inline CloseToMatcher close_to(double expected, double rel = 1e-12, double abs = 1e-14) {
+    return {expected, rel, abs};
 }
 
 }  // namespace dp::test
