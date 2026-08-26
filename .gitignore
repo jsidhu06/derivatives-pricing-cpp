@@ -1,0 +1,22 @@
+# Build trees
+build/
+out/
+cmake-build-*/
+_deps/
+
+# CMake
+CMakeUserPresets.json
+CMakeCache.txt
+CMakeFiles/
+compile_commands.json
+
+# Tooling
+.cache/
+.vscode/
+.idea/
+*.swp
+.venv/
+__pycache__/
+
+# Reference Python implementation (separate git repo, kept locally for porting)
+derivatives-pricing/

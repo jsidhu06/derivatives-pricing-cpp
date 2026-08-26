@@ -1,0 +1,96 @@
+Preset CMake variables:
+
+  CMAKE_BUILD_TYPE="Debug"
+  CMAKE_EXPORT_COMPILE_COMMANDS="ON"
+  DP_BUILD_TESTS="ON"
+  DP_ENABLE_CLANG_TIDY="ON"
+  DP_ENABLE_SANITIZERS="OFF"
+
+-- The CXX compiler identification is GNU 13.3.0
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/c++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- clang-tidy: /usr/bin/clang-tidy
+-- Populating eigen
+-- Configuring done (0.0s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/jsidhu/repos/derivatives-pricing-cpp/build/tidy/_deps/eigen-subbuild
+[1/9] Creating directories for 'eigen-populate'
+[1/9] Performing download step (git clone) for 'eigen-populate'
+Cloning into 'eigen-src'...
+HEAD is now at 3147391d Change version to 3.4.0.
+[2/9] Performing update step for 'eigen-populate'
+[3/9] No patch step for 'eigen-populate'
+[5/9] No configure step for 'eigen-populate'
+[6/9] No build step for 'eigen-populate'
+[7/9] No install step for 'eigen-populate'
+[8/9] No test step for 'eigen-populate'
+[9/9] Completed 'eigen-populate'
+-- Populating boost_math
+-- Configuring done (0.0s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/jsidhu/repos/derivatives-pricing-cpp/build/tidy/_deps/boost_math-subbuild
+[1/9] Creating directories for 'boost_math-populate'
+[1/9] Performing download step (git clone) for 'boost_math-populate'
+Cloning into 'boost_math-src'...
+HEAD is now at 4c2cdc2c Regenerate docs.
+[2/9] Performing update step for 'boost_math-populate'
+[3/9] No patch step for 'boost_math-populate'
+[5/9] No configure step for 'boost_math-populate'
+[6/9] No build step for 'boost_math-populate'
+[7/9] No install step for 'boost_math-populate'
+[8/9] No test step for 'boost_math-populate'
+[9/9] Completed 'boost_math-populate'
+-- Populating spdlog
+-- Configuring done (0.0s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/jsidhu/repos/derivatives-pricing-cpp/build/tidy/_deps/spdlog-subbuild
+[1/9] Creating directories for 'spdlog-populate'
+[1/9] Performing download step (git clone) for 'spdlog-populate'
+Cloning into 'spdlog-src'...
+HEAD is now at 6fa3601 Version 1.15.3
+[2/9] Performing update step for 'spdlog-populate'
+[3/9] No patch step for 'spdlog-populate'
+[5/9] No configure step for 'spdlog-populate'
+[6/9] No build step for 'spdlog-populate'
+[7/9] No install step for 'spdlog-populate'
+[8/9] No test step for 'spdlog-populate'
+[9/9] Completed 'spdlog-populate'
+-- Build spdlog: 1.15.3
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE
+-- Build type: Debug
+-- Looking for fwrite_unlocked
+-- Looking for fwrite_unlocked - found
+-- Populating catch2
+-- Configuring done (0.0s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/jsidhu/repos/derivatives-pricing-cpp/build/tidy/_deps/catch2-subbuild
+[1/9] Creating directories for 'catch2-populate'
+[1/9] Performing download step (git clone) for 'catch2-populate'
+Cloning into 'catch2-src'...
+HEAD is now at 2b60af8 v3.8.1
+[2/9] Performing update step for 'catch2-populate'
+[3/9] No patch step for 'catch2-populate'
+[5/9] No configure step for 'catch2-populate'
+[6/9] No build step for 'catch2-populate'
+[7/9] No install step for 'catch2-populate'
+[8/9] No test step for 'catch2-populate'
+[9/9] Completed 'catch2-populate'
+-- Performing Test HAVE_FLAG__ffile_prefix_map__home_jsidhu_repos_derivatives_pricing_cpp_build_tidy__deps_catch2_src__
+-- Performing Test HAVE_FLAG__ffile_prefix_map__home_jsidhu_repos_derivatives_pricing_cpp_build_tidy__deps_catch2_src__ - Success
+--
+-- derivatives_pricing 0.1.0
+--   Build type:        Debug
+--   Compiler:          GNU 13.3.0
+--   Tests:             ON
+--   Sanitizers:        OFF
+--   clang-tidy:        ON
+--   Warnings as errors OFF
+--
+-- Configuring done (25.3s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/jsidhu/repos/derivatives-pricing-cpp/build/tidy

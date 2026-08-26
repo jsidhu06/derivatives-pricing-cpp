@@ -1,0 +1,57 @@
+---
+# derivatives-pricing-cpp formatting. Google base, 4-space indent, 100 columns.
+BasedOnStyle: Google
+Language: Cpp
+Standard: c++20
+
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 100
+AccessModifierOffset: -4
+ContinuationIndentWidth: 4
+
+DerivePointerAlignment: false
+PointerAlignment: Left
+ReferenceAlignment: Left
+
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortLambdasOnASingleLine: All
+AllowShortBlocksOnASingleLine: Never
+
+BreakBeforeBraces: Attach
+BreakConstructorInitializers: BeforeColon
+PackConstructorInitializers: NextLine
+BinPackArguments: false
+BinPackParameters: false
+AlignAfterOpenBracket: Align
+AlignConsecutiveAssignments: None
+AlignOperands: Align
+
+IncludeBlocks: Regroup
+IncludeCategories:
+  # Own public headers first.
+  - Regex: '^"dp/'
+    Priority: 1
+  # Own private / test headers.
+  - Regex: '^"'
+    Priority: 2
+  # Third-party.
+  - Regex: '^<(Eigen|boost|spdlog|catch2|pcg)'
+    Priority: 3
+  # Standard library.
+  - Regex: '^<[a-z_]+>'
+    Priority: 4
+  - Regex: '.*'
+    Priority: 5
+SortIncludes: CaseSensitive
+
+NamespaceIndentation: None
+FixNamespaceComments: true
+SpaceAfterTemplateKeyword: true
+Cpp11BracedListStyle: true
+InsertNewlineAtEOF: true
+QualifierAlignment: Left
+...

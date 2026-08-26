@@ -1,0 +1,114 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "DP_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "debug",
+      "displayName": "Debug (ASan + UBSan)",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "DP_ENABLE_SANITIZERS": "ON"
+      }
+    },
+    {
+      "name": "release",
+      "displayName": "Release",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "relwithdebinfo",
+      "displayName": "RelWithDebInfo",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    },
+    {
+      "name": "tidy",
+      "displayName": "Debug + clang-tidy",
+      "inherits": "debug",
+      "cacheVariables": {
+        "DP_ENABLE_SANITIZERS": "OFF",
+        "DP_ENABLE_CLANG_TIDY": "ON"
+      }
+    },
+    {
+      "name": "ci-debug",
+      "displayName": "CI Debug (sanitizers, -Werror)",
+      "inherits": "debug",
+      "cacheVariables": {
+        "DP_WARNINGS_AS_ERRORS": "ON"
+      }
+    },
+    {
+      "name": "ci-release",
+      "displayName": "CI Release (-Werror)",
+      "inherits": "release",
+      "cacheVariables": {
+        "DP_WARNINGS_AS_ERRORS": "ON"
+      }
+    },
+    {
+      "name": "ci-tidy",
+      "displayName": "CI clang-tidy",
+      "inherits": "tidy",
+      "cacheVariables": {
+        "DP_WARNINGS_AS_ERRORS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "debug", "configurePreset": "debug" },
+    { "name": "release", "configurePreset": "release" },
+    { "name": "relwithdebinfo", "configurePreset": "relwithdebinfo" },
+    { "name": "tidy", "configurePreset": "tidy" },
+    { "name": "ci-debug", "configurePreset": "ci-debug" },
+    { "name": "ci-release", "configurePreset": "ci-release" },
+    { "name": "ci-tidy", "configurePreset": "ci-tidy" }
+  ],
+  "testPresets": [
+    {
+      "name": "base-test",
+      "hidden": true,
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error", "stopOnFailure": false }
+    },
+    { "name": "debug", "inherits": "base-test", "configurePreset": "debug" },
+    { "name": "release", "inherits": "base-test", "configurePreset": "release" },
+    { "name": "relwithdebinfo", "inherits": "base-test", "configurePreset": "relwithdebinfo" },
+    { "name": "ci-debug", "inherits": "base-test", "configurePreset": "ci-debug" },
+    { "name": "ci-release", "inherits": "base-test", "configurePreset": "ci-release" }
+  ],
+  "workflowPresets": [
+    {
+      "name": "debug",
+      "steps": [
+        { "type": "configure", "name": "debug" },
+        { "type": "build", "name": "debug" },
+        { "type": "test", "name": "debug" }
+      ]
+    },
+    {
+      "name": "release",
+      "steps": [
+        { "type": "configure", "name": "release" },
+        { "type": "build", "name": "release" },
+        { "type": "test", "name": "release" }
+      ]
+    }
+  ]
+}

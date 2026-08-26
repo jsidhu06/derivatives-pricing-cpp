@@ -1,0 +1,14 @@
+{
+  "format": {
+    "line_width": 100,
+    "tab_size": 4,
+    "max_subgroups_hwrap": 3,
+    "max_pargs_hwrap": 6,
+    "dangle_parens": true,
+    "command_case": "lower",
+    "keyword_case": "upper"
+  },
+  "lint": {
+    "disabled_codes": ["C0103", "C0111", "C0301"]
+  }
+}
