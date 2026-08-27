@@ -1,6 +1,10 @@
 {
   "version": 6,
-  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
   "configurePresets": [
     {
       "name": "base",
@@ -69,45 +73,185 @@
       "cacheVariables": {
         "DP_WARNINGS_AS_ERRORS": "ON"
       }
+    },
+    {
+      "name": "clang",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang-18",
+        "CMAKE_CXX_COMPILER": "clang++-18"
+      }
+    },
+    {
+      "name": "clang-debug",
+      "displayName": "Clang Debug (ASan + UBSan, -Werror)",
+      "inherits": [
+        "clang",
+        "ci-debug"
+      ]
+    },
+    {
+      "name": "clang-release",
+      "displayName": "Clang Release (-Werror)",
+      "inherits": [
+        "clang",
+        "ci-release"
+      ]
     }
   ],
   "buildPresets": [
-    { "name": "debug", "configurePreset": "debug" },
-    { "name": "release", "configurePreset": "release" },
-    { "name": "relwithdebinfo", "configurePreset": "relwithdebinfo" },
-    { "name": "tidy", "configurePreset": "tidy" },
-    { "name": "ci-debug", "configurePreset": "ci-debug" },
-    { "name": "ci-release", "configurePreset": "ci-release" },
-    { "name": "ci-tidy", "configurePreset": "ci-tidy" }
+    {
+      "name": "debug",
+      "configurePreset": "debug"
+    },
+    {
+      "name": "release",
+      "configurePreset": "release"
+    },
+    {
+      "name": "relwithdebinfo",
+      "configurePreset": "relwithdebinfo"
+    },
+    {
+      "name": "tidy",
+      "configurePreset": "tidy"
+    },
+    {
+      "name": "ci-debug",
+      "configurePreset": "ci-debug"
+    },
+    {
+      "name": "ci-release",
+      "configurePreset": "ci-release"
+    },
+    {
+      "name": "ci-tidy",
+      "configurePreset": "ci-tidy"
+    },
+    {
+      "name": "clang-debug",
+      "configurePreset": "clang-debug"
+    },
+    {
+      "name": "clang-release",
+      "configurePreset": "clang-release"
+    }
   ],
   "testPresets": [
     {
       "name": "base-test",
       "hidden": true,
-      "output": { "outputOnFailure": true },
-      "execution": { "noTestsAction": "error", "stopOnFailure": false }
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error",
+        "stopOnFailure": false
+      }
     },
-    { "name": "debug", "inherits": "base-test", "configurePreset": "debug" },
-    { "name": "release", "inherits": "base-test", "configurePreset": "release" },
-    { "name": "relwithdebinfo", "inherits": "base-test", "configurePreset": "relwithdebinfo" },
-    { "name": "ci-debug", "inherits": "base-test", "configurePreset": "ci-debug" },
-    { "name": "ci-release", "inherits": "base-test", "configurePreset": "ci-release" }
+    {
+      "name": "debug",
+      "inherits": "base-test",
+      "configurePreset": "debug"
+    },
+    {
+      "name": "release",
+      "inherits": "base-test",
+      "configurePreset": "release"
+    },
+    {
+      "name": "relwithdebinfo",
+      "inherits": "base-test",
+      "configurePreset": "relwithdebinfo"
+    },
+    {
+      "name": "ci-debug",
+      "inherits": "base-test",
+      "configurePreset": "ci-debug"
+    },
+    {
+      "name": "ci-release",
+      "inherits": "base-test",
+      "configurePreset": "ci-release"
+    },
+    {
+      "name": "clang-debug",
+      "inherits": "base-test",
+      "configurePreset": "clang-debug"
+    },
+    {
+      "name": "clang-release",
+      "inherits": "base-test",
+      "configurePreset": "clang-release"
+    }
   ],
   "workflowPresets": [
     {
       "name": "debug",
       "steps": [
-        { "type": "configure", "name": "debug" },
-        { "type": "build", "name": "debug" },
-        { "type": "test", "name": "debug" }
+        {
+          "type": "configure",
+          "name": "debug"
+        },
+        {
+          "type": "build",
+          "name": "debug"
+        },
+        {
+          "type": "test",
+          "name": "debug"
+        }
       ]
     },
     {
       "name": "release",
       "steps": [
-        { "type": "configure", "name": "release" },
-        { "type": "build", "name": "release" },
-        { "type": "test", "name": "release" }
+        {
+          "type": "configure",
+          "name": "release"
+        },
+        {
+          "type": "build",
+          "name": "release"
+        },
+        {
+          "type": "test",
+          "name": "release"
+        }
+      ]
+    },
+    {
+      "name": "clang-debug",
+      "steps": [
+        {
+          "type": "configure",
+          "name": "clang-debug"
+        },
+        {
+          "type": "build",
+          "name": "clang-debug"
+        },
+        {
+          "type": "test",
+          "name": "clang-debug"
+        }
+      ]
+    },
+    {
+      "name": "clang-release",
+      "steps": [
+        {
+          "type": "configure",
+          "name": "clang-release"
+        },
+        {
+          "type": "build",
+          "name": "clang-release"
+        },
+        {
+          "type": "test",
+          "name": "clang-release"
+        }
       ]
     }
   ]
