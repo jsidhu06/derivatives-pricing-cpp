@@ -98,8 +98,10 @@ TEST_CASE("constructor validation", "[discount_curve]") {
         CHECK(curve.times().size() == 2);
     }
     SECTION("non-finite inputs rejected") {
-        CHECK_THROWS_AS(DiscountCurve(arr({0.0, 1.0}), arr({1.0, NAN})), dp::ValidationError);
-        CHECK_THROWS_AS(DiscountCurve(arr({0.0, INFINITY}), arr({1.0, 0.9})), dp::ValidationError);
+        CHECK_THROWS_AS(DiscountCurve(arr({0.0, 1.0}), arr({1.0, dp::test::kNaN})),
+                        dp::ValidationError);
+        CHECK_THROWS_AS(DiscountCurve(arr({0.0, dp::test::kInfinity}), arr({1.0, 0.9})),
+                        dp::ValidationError);
     }
 }
 

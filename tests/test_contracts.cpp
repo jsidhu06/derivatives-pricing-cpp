@@ -68,7 +68,7 @@ TEST_CASE("VanillaSpec validation", "[contracts]") {
                          message_contains("VanillaSpec.strike must be >= 0"));
     CHECK_THROWS_MATCHES(VanillaSpec({.option_type = OptionType::Call,
                                       .exercise_type = ExerciseType::European,
-                                      .strike = NAN,
+                                      .strike = dp::test::kNaN,
                                       .maturity = kMaturity}),
                          ValidationError,
                          message_contains("must be finite"));
@@ -111,11 +111,12 @@ TEST_CASE("PayoffSpec requires a callable and finite boundary model", "[contract
             {.exercise_type = ExerciseType::European, .maturity = kMaturity, .payoff_fn = {}}),
         ConfigurationError,
         message_contains("payoff_fn must be callable"));
-    CHECK_THROWS_AS(PayoffSpec({.exercise_type = ExerciseType::European,
-                                .maturity = kMaturity,
-                                .payoff_fn = [](double s) { return s; },
-                                .boundary_model = PayoffBoundaryModel{{0.0, NAN}, {1.0, 0.0}}}),
-                    ValidationError);
+    CHECK_THROWS_AS(
+        PayoffSpec({.exercise_type = ExerciseType::European,
+                    .maturity = kMaturity,
+                    .payoff_fn = [](double s) { return s; },
+                    .boundary_model = PayoffBoundaryModel{{0.0, dp::test::kNaN}, {1.0, 0.0}}}),
+        ValidationError);
 }
 
 // ---------------------------------------------------------------------------
@@ -143,7 +144,7 @@ TEST_CASE("BarrierSpec numeric validation", "[contracts][barrier]") {
             BarrierSpec(p), ValidationError, message_contains("strike must be >= 0"));
     }
     SECTION("non-finite strike") {
-        p.strike = INFINITY;
+        p.strike = dp::test::kInfinity;
         CHECK_THROWS_MATCHES(
             BarrierSpec(p), ValidationError, message_contains("strike must be finite"));
     }

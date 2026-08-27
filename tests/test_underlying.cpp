@@ -48,7 +48,7 @@ TEST_CASE("UnderlyingData rejects negative volatility, allows zero", "[underlyin
 }
 
 TEST_CASE("UnderlyingData rejects NaN volatility", "[underlying]") {
-    CHECK_THROWS_MATCHES(UnderlyingData(100.0, NAN, md()),
+    CHECK_THROWS_MATCHES(UnderlyingData(100.0, dp::test::kNaN, md()),
                          ValidationError,
                          message_contains("volatility must be finite"));
 }
@@ -66,7 +66,7 @@ TEST_CASE("UnderlyingData sorts dividends and validates amounts", "[underlying]"
     REQUIRE(ud.discrete_dividends().size() == 2);
     CHECK(ud.discrete_dividends()[0].ex_date == make_datetime(2025, 3, 1));
     CHECK(ud.discrete_dividends()[1].amount == 1.0);
-    CHECK_THROWS_AS(UnderlyingData(100.0, 0.2, md(), {{make_datetime(2025, 3, 1), NAN}}),
+    CHECK_THROWS_AS(UnderlyingData(100.0, 0.2, md(), {{make_datetime(2025, 3, 1), dp::test::kNaN}}),
                     ValidationError);
 }
 

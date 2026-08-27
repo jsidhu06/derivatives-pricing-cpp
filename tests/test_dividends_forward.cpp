@@ -31,7 +31,7 @@ TEST_CASE("normalize_dividends sorts by ex-date and validates amounts", "[divide
     CHECK(sorted[0].ex_date == make_datetime(2025, 3, 1));
     CHECK(sorted[1].ex_date == make_datetime(2025, 9, 1));
 
-    CHECK_THROWS_AS(dp::normalize_dividends({{make_datetime(2025, 3, 1), NAN}}),
+    CHECK_THROWS_AS(dp::normalize_dividends({{make_datetime(2025, 3, 1), dp::test::kNaN}}),
                     dp::ValidationError);
 }
 

@@ -200,7 +200,7 @@ TEST_CASE("a bump is rejected for non-bumping methods and must be positive",
     CHECK_THROWS_MATCHES(ov.rho({.method = GreekCalculationMethod::Numerical, .bump = 0.0}),
                          ValidationError,
                          message_contains("rate_bump must be strictly positive"));
-    CHECK_THROWS_AS(ov.delta({.method = GreekCalculationMethod::Numerical, .bump = NAN}),
+    CHECK_THROWS_AS(ov.delta({.method = GreekCalculationMethod::Numerical, .bump = dp::test::kNaN}),
                     ValidationError);
     CHECK_NOTHROW(ov.delta({.method = GreekCalculationMethod::Numerical, .bump = 0.5}));
 }

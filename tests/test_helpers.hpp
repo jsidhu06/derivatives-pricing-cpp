@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -25,6 +26,11 @@ inline constexpr double kSpot = 100.0;
 inline constexpr double kStrike = 100.0;
 inline constexpr double kRate = 0.05;
 inline constexpr double kVol = 0.20;
+
+/// `double` NaN / infinity. The C `NAN` / `INFINITY` macros are *float*
+/// builtins; assigning them to a double trips clang's -Wdouble-promotion.
+inline constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
+inline constexpr double kInfinity = std::numeric_limits<double>::infinity();
 
 /// Flat curve whose domain ends exactly at `maturity` (mirrors the Python
 /// test helper of the same name).
