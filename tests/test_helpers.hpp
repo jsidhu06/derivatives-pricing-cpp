@@ -73,19 +73,19 @@ inline auto message_contains(const std::string& needle) {
     return Catch::Matchers::MessageMatches(Catch::Matchers::ContainsSubstring(needle));
 }
 
-/// Owning "relative tolerance with an absolute floor" matcher.
-///
-/// Catch2's `WithinRel(x) || WithinAbs(x)` stores *references* to its
-/// operands, so it cannot be returned from a helper; this matcher owns its
-/// state and can be.
+/// Owning tolerance matcher with `numpy.isclose` semantics:
+/// `|actual - expected| <= abs + rel * |expected|`, with `expected` as the
+/// reference value — asymmetric, exactly like the Python reference test
+/// suite's `np.isclose(computed, reference)` checks. (Catch2's own
+/// `WithinRel || WithinAbs` stores references to its operands, so it cannot
+/// be returned from a helper; this matcher owns its state and can be.)
 class CloseToMatcher final : public Catch::Matchers::MatcherBase<double> {
 public:
     CloseToMatcher(double expected, double rel, double abs)
         : expected_(expected), rel_(rel), abs_(abs) {}
 
     bool match(const double& actual) const override {
-        const double diff = std::abs(actual - expected_);
-        return diff <= abs_ || diff <= rel_ * std::max(std::abs(actual), std::abs(expected_));
+        return std::abs(actual - expected_) <= abs_ + rel_ * std::abs(expected_);
     }
 
     std::string describe() const override {
