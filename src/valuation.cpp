@@ -3,6 +3,7 @@
 #include "dp/diagnostics.hpp"
 #include "dp/exceptions.hpp"
 
+#include "engines/binomial.hpp"
 #include "engines/bsm.hpp"
 #include "engines/engine.hpp"
 #include "valuation_state.hpp"
@@ -160,6 +161,7 @@ std::unique_ptr<engines::PricingEngine> build_engine(const detail::ValuationStat
             }
             return std::make_unique<engines::BsmEngine>(state);
         case PricingMethod::Binomial:
+            return std::make_unique<engines::BinomialEngine>(state);
         case PricingMethod::PdeFd:
             throw UnsupportedFeatureError(
                 std::format("{} pricing is not yet implemented in this port.", name(method)));
@@ -286,6 +288,25 @@ void validate_bump(std::optional<double> bump,
         bump_name));
 }
 
+/// True when the method-specific params carry `control_variate_european`.
+bool control_variate_requested(const std::optional<ValuationParams>& params) {
+    if (!params.has_value()) {
+        return false;
+    }
+    return std::visit([](const auto& p) { return p.control_variate_european; }, *params);
+}
+
+/// Copy of `params` with the control-variate flag cleared (for the European
+/// numerical leg, which must not recurse into another adjustment).
+ValuationParams without_control_variate(const ValuationParams& params) {
+    return std::visit(
+        [](auto p) -> ValuationParams {
+            p.control_variate_european = false;
+            return p;
+        },
+        params);
+}
+
 DateTime add_days(DateTime date, double days) {
     using namespace std::chrono;
     return date + round<microseconds>(duration<double, std::chrono::days::period>(days));
@@ -321,6 +342,54 @@ struct OptionValuation::Impl {
     /// Fresh valuation with the same spec/method/params on a bumped underlying.
     [[nodiscard]] OptionValuation rebuild(UnderlyingData bumped) const {
         return {std::move(bumped), state.spec, state.pricing_method, state.params};
+    }
+
+    /// European control-variate adjustment for American pricing:
+    /// `PV_am + (PV_eu_bsm - PV_eu_numerical)`, both European legs priced on
+    /// the same underlying (the numerical leg with the same params, CV off).
+    [[nodiscard]] double apply_control_variate(double base_pv) const {
+        if (state.exercise_type() != ExerciseType::American) {
+            throw ValidationError(
+                "control_variate_european is only valid for options with American exercise.");
+        }
+        if (state.pricing_method != PricingMethod::Binomial &&
+            state.pricing_method != PricingMethod::PdeFd &&
+            state.pricing_method != PricingMethod::MonteCarlo) {
+            throw UnsupportedFeatureError(
+                "control_variate_european is only supported for BINOMIAL, PDE_FD, and "
+                "MONTE_CARLO pricing.");
+        }
+        if (std::holds_alternative<PayoffSpec>(state.spec)) {
+            throw UnsupportedFeatureError(
+                "control_variate_european is not supported for PayoffSpec.");
+        }
+        const auto* vanilla = std::get_if<VanillaSpec>(&state.spec);
+        if (vanilla == nullptr || !state.option_type.has_value()) {
+            throw UnsupportedFeatureError(
+                "control_variate_european requires a CALL or PUT option type.");
+        }
+
+        if (!state.params.has_value()) {
+            throw ConfigurationError("control_variate_european requires method params");
+        }
+        const VanillaSpec euro_spec({
+            .option_type = vanilla->option_type(),
+            .exercise_type = ExerciseType::European,
+            .strike = vanilla->strike(),
+            .maturity = vanilla->maturity(),
+            .currency = vanilla->currency(),
+            .contract_size = vanilla->contract_size(),
+        });
+
+        const double euro_numerical = OptionValuation(state.underlying,
+                                                      euro_spec,
+                                                      state.pricing_method,
+                                                      without_control_variate(*state.params))
+                                          .present_value();
+        const double euro_bsm =
+            OptionValuation(state.underlying, euro_spec, PricingMethod::Bsm).present_value();
+
+        return base_pv + (euro_bsm - euro_numerical);
     }
 
     [[nodiscard]] bool is_barrier() const noexcept {
@@ -396,8 +465,13 @@ OptionValuation& OptionValuation::operator=(OptionValuation&&) noexcept = defaul
 // ── Present value ───────────────────────────────────────────────────
 
 double OptionValuation::present_value() const {
-    return impl_->memoize({GreekKind::PresentValue, std::nullopt, std::nullopt},
-                          [&] { return impl_->engine->present_value(); });
+    return impl_->memoize({GreekKind::PresentValue, std::nullopt, std::nullopt}, [&] {
+        const double base = impl_->engine->present_value();
+        if (control_variate_requested(impl_->state.params)) {
+            return impl_->apply_control_variate(base);
+        }
+        return base;
+    });
 }
 
 // ── Greeks ──────────────────────────────────────────────────────────

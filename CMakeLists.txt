@@ -58,6 +58,7 @@ target_sources(
             src/diagnostics.cpp
             src/discount_curve.cpp
             src/dividends.cpp
+            src/engines/binomial.cpp
             src/engines/bsm.cpp
             src/enums.cpp
             src/forward.cpp

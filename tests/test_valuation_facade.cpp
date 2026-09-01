@@ -135,8 +135,6 @@ TEST_CASE("params must match the pricing method", "[valuation]") {
 }
 
 TEST_CASE("engines not yet ported fail loudly", "[valuation]") {
-    CHECK_THROWS_AS(OptionValuation(ud(), vanilla(), PricingMethod::Binomial),
-                    UnsupportedFeatureError);
     CHECK_THROWS_AS(OptionValuation(ud(), vanilla(), PricingMethod::PdeFd),
                     UnsupportedFeatureError);
 }

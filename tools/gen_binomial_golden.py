@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+"""Generate tests/golden/binomial_reference.inc from the Python reference library.
+
+Usage (repo root):
+
+    .venv-goldenref/bin/python tools/gen_binomial_golden.py > tests/golden/binomial_reference.inc
+
+Each row records a CRR valuation's inputs plus PV, tree Greeks (delta, gamma,
+theta) and NUMERICAL (bump-and-revalue, default bumps) vega and rho. All
+maturities and step counts are chosen so the calendar grid step is an exact
+whole number of seconds — then pandas' nanosecond grid and the C++ microsecond
+grid coincide, and the trees are bit-for-bit comparable.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import itertools
+import sys
+
+import derivatives_pricing as dp
+
+PRICING_DATE = dt.datetime(2025, 1, 1)
+TREE = dp.GreekCalculationMethod.TREE
+NUM = dp.GreekCalculationMethod.NUMERICAL
+
+
+def build_valuation(*, spot, strike, rate, div_yield, vol, maturity_days, num_steps,
+                    option_type, exercise, div_amount=0.0, div_day=0, control_variate=False):
+    maturity = PRICING_DATE + dt.timedelta(days=maturity_days)
+    md = dp.MarketData(PRICING_DATE, dp.DiscountCurve.flat(rate), currency="USD")
+    q_curve = dp.DiscountCurve.flat(div_yield) if div_yield != 0.0 else None
+    divs = [(PRICING_DATE + dt.timedelta(days=div_day), div_amount)] if div_amount else None
+    ud = dp.UnderlyingData(
+        initial_value=spot, volatility=vol, market_data=md,
+        dividend_curve=q_curve, discrete_dividends=divs,
+    )
+    spec = dp.VanillaSpec(option_type=option_type, exercise_type=exercise,
+                          strike=strike, maturity=maturity)
+    params = dp.BinomialParams(num_steps=num_steps, control_variate_european=control_variate)
+    return dp.OptionValuation(ud, spec, dp.PricingMethod.BINOMIAL, params=params)
+
+
+def row(label, *, spot, strike=100.0, rate, div_yield, vol, maturity_days, num_steps,
+        option_type, exercise, div_amount=0.0, div_day=0, control_variate=False):
+    ov = build_valuation(spot=spot, strike=strike, rate=rate, div_yield=div_yield, vol=vol,
+                         maturity_days=maturity_days, num_steps=num_steps,
+                         option_type=option_type, exercise=exercise,
+                         div_amount=div_amount, div_day=div_day,
+                         control_variate=control_variate)
+    values = [
+        ov.present_value(),
+        ov.delta(greek_calc_method=TREE),
+        ov.gamma(greek_calc_method=TREE),
+        ov.theta(greek_calc_method=TREE),
+        ov.vega(greek_calc_method=NUM),
+        ov.rho(greek_calc_method=NUM),
+    ]
+    flags = [
+        "true" if option_type is dp.OptionType.CALL else "false",
+        "true" if exercise is dp.ExerciseType.AMERICAN else "false",
+        "true" if control_variate else "false",
+    ]
+    nums = ", ".join(repr(float(v)) for v in values)
+    return (f'    {{"{label}", {spot!r}, {strike!r}, {rate!r}, {div_yield!r}, {vol!r}, '
+            f'{maturity_days}, {num_steps}, {div_amount!r}, {div_day}, '
+            f'{", ".join(flags)}, {nums}}},')
+
+
+def main() -> None:
+    C, P = dp.OptionType.CALL, dp.OptionType.PUT
+    EU, AM = dp.ExerciseType.EUROPEAN, dp.ExerciseType.AMERICAN
+    rows = []
+
+    # Main grid: 1y maturity; 100 and 500 steps both divide 365d exactly.
+    for spot, q, vol, steps, ot, ex in itertools.product(
+            [80.0, 100.0, 120.0], [0.0, 0.03], [0.2, 0.5], [100, 500], [C, P], [EU, AM]):
+        label = (f"S{spot:g}_q{q:g}_v{vol:g}_n{steps}_{ot.name[0]}_{ex.name[:2]}")
+        rows.append(row(label, spot=spot, rate=0.05, div_yield=q, vol=vol,
+                        maturity_days=365, num_steps=steps, option_type=ot, exercise=ex))
+
+    # Maturity variants (30d and 2y; 250 steps divide both exactly).
+    for days, ot, ex in itertools.product([30, 730], [C, P], [EU, AM]):
+        rows.append(row(f"T{days}_{ot.name[0]}_{ex.name[:2]}", spot=100.0, rate=0.05,
+                        div_yield=0.0, vol=0.2, maturity_days=days, num_steps=250,
+                        option_type=ot, exercise=ex))
+
+    # Discrete cash dividends (escrowed tree).
+    for (amount, day), ot, ex in itertools.product(
+            [(1.0, 180), (2.5, 30)], [C, P], [EU, AM]):
+        rows.append(row(f"div{amount:g}_d{day}_{ot.name[0]}_{ex.name[:2]}", spot=100.0,
+                        rate=0.05, div_yield=0.0, vol=0.2, maturity_days=365, num_steps=250,
+                        option_type=ot, exercise=ex, div_amount=amount, div_day=day))
+
+    # Control-variate American pricing.
+    for ot, (spot, strike, vol, rate) in itertools.product(
+            [C, P], [(100.0, 110.0, 0.25, 0.03), (100.0, 95.0, 0.2, 0.05)]):
+        rows.append(row(f"cv_K{strike:g}_{ot.name[0]}", spot=spot, strike=strike, rate=rate,
+                        div_yield=0.0, vol=vol, maturity_days=365, num_steps=300,
+                        option_type=ot, exercise=AM, control_variate=True))
+
+    out = sys.stdout
+    out.write("// Generated by tools/gen_binomial_golden.py from derivatives_pricing "
+              f"{dp.__version__}. Do not edit.\n")
+    out.write("// Columns: label, spot, strike, rate, div_yield, vol, maturity_days, "
+              "num_steps, div_amount, div_day,\n")
+    out.write("//          is_call, is_american, control_variate, "
+              "pv, delta_tree, gamma_tree, theta_tree, vega_num, rho_num\n")
+    out.write("// NOLINTBEGIN\n")
+    out.write("inline constexpr BinomialGoldenRow kBinomialGolden[] = {\n")
+    out.write("\n".join(rows))
+    out.write("\n};\n// NOLINTEND\n")
+
+
+if __name__ == "__main__":
+    main()
