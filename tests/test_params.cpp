@@ -100,3 +100,26 @@ TEST_CASE("PdeParams::for_barriers picks scheme from monitoring", "[params]") {
     CHECK(disc.american_solver == PdeEarlyExercise::Intrinsic);
     CHECK_NOTHROW(disc.validate());
 }
+
+TEST_CASE("for_barriers presets can be overridden field-by-field", "[params]") {
+    // Mirrors the Python `PDEParams.for_barriers(monitoring=..., **overrides)`
+    // pattern: preset first, then assign the fields to override.
+    auto params = PdeParams::for_barriers(BarrierMonitoring::Discrete);
+    params.time_steps = 5000;
+    params.tol = 1e-8;
+    params.method = PdeMethod::CrankNicolson;  // even the preset-chosen scheme
+
+    CHECK(params.time_steps == 5000);
+    CHECK(params.tol == 1e-8);
+    CHECK(params.method == PdeMethod::CrankNicolson);
+    // Untouched presets survive.
+    CHECK(params.spot_steps == 1200);
+    CHECK(params.space_grid == PdeSpaceGrid::LogSpot);
+    CHECK(params.american_solver == PdeEarlyExercise::Intrinsic);
+    CHECK_NOTHROW(params.validate());
+
+    // Invalid overrides are still rejected by validate().
+    params.omega = 2.5;
+    CHECK_THROWS_MATCHES(
+        params.validate(), ValidationError, message_contains("omega must be in (1.0, 2.0)"));
+}

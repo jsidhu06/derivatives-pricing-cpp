@@ -74,6 +74,16 @@ struct PdeParams {
     /// Parameters tuned for barrier pricing: fine log-spot grid, with the
     /// time-marching scheme chosen from the monitoring style (Crank-Nicolson
     /// for continuous, explicit-Hull for discrete).
+    ///
+    /// To override individual presets, assign to the returned struct — the
+    /// C++ analogue of the Python `PDEParams.for_barriers(..., **overrides)`:
+    ///
+    ///     auto params = PdeParams::for_barriers(BarrierMonitoring::Discrete);
+    ///     params.time_steps = 5000;  // override; validated at use
+    ///
+    /// Note: if you raise `spot_steps` without also raising `time_steps`,
+    /// the explicit schemes' CFL stability check may warn — keep roughly
+    /// `time_steps >= 2 * spot_steps` for sigma ~ 0.25.
     [[nodiscard]] static PdeParams for_barriers(BarrierMonitoring monitoring);
 };
 
