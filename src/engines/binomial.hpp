@@ -34,25 +34,37 @@ public:
     [[nodiscard]] double theta() const override;
 
 private:
-    /// Deterministic tree inputs, computed once.
+    /// Deterministic tree inputs, computed once. O(n) storage.
     struct Setup {
         double delta_t;                   ///< Uniform step in year fractions.
         Eigen::ArrayXd discount_factors;  ///< Per-step DFs, length n.
         Eigen::ArrayXd p;                 ///< Per-step risk-neutral up probabilities.
-        Eigen::MatrixXd spot_lattice;     ///< (n+1, n+1); row = down moves, col = time.
+        Eigen::ArrayXd up_powers;         ///< u^(k-n) for k = 0..2n.
+        Eigen::ArrayXd pv_remaining;      ///< Escrow add-back per date (empty when no dividends).
+        double escrowed_spot;             ///< Spot minus PV of all dividends.
+    };
+
+    /// Backward-induction results: the PV plus the handful of early-time
+    /// nodes required by the Hull tree Greeks (f = option value, s = spot;
+    /// indices are (down-moves, time)). Step-2 fields are NaN when n < 2.
+    struct Solution {
+        double pv;
+        double f01, f11, s01, s11;       ///< Step-1 nodes (delta).
+        double f02, f12, f22;            ///< Step-2 values (gamma, theta).
+        double s02, s12, s22;            ///< Step-2 spots (gamma).
     };
 
     [[nodiscard]] int num_steps() const;
     [[nodiscard]] bool early_exercise() const;
     [[nodiscard]] const Setup& setup() const;
-    /// Backward-induction value lattice, (n+1, n+1).
-    [[nodiscard]] const Eigen::MatrixXd& option_lattice() const;
-    /// Payoff at every lattice node (vanilla intrinsic or PayoffSpec).
-    [[nodiscard]] Eigen::MatrixXd intrinsic_values(const Eigen::MatrixXd& spots) const;
+    [[nodiscard]] const Solution& solution() const;
+    /// Spot at node (down-moves `i`, step `t`), matching the reference
+    /// lattice bit-for-bit: `escrowed_spot * u^(t-2i) + pv_remaining[t]`.
+    [[nodiscard]] double spot_at(const Setup& s, int i, int t) const;
 
     const detail::ValuationState& state_;
     mutable std::optional<Setup> setup_;
-    mutable std::optional<Eigen::MatrixXd> option_lattice_;
+    mutable std::optional<Solution> solution_;
 };
 
 }  // namespace dp::engines

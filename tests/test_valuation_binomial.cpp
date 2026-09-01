@@ -204,6 +204,27 @@ TEST_CASE("tree gamma and theta need at least two steps", "[binomial][greeks]") 
     CHECK_NOTHROW(ov.delta(kTree));
 }
 
+TEST_CASE("tree Greeks are finite on the smallest admissible trees", "[binomial][greeks][edge]") {
+    // For n == 1 (delta) and n == 2 (gamma/theta) the nodes the Greeks read
+    // sit on the terminal layer, which the backward-induction loop never
+    // revisits; regression guard against those nodes staying uncaptured.
+    const OptionValuation one(
+        ud(), spec(), PricingMethod::Binomial, BinomialParams{.num_steps = 1});
+    const double delta_one = one.delta(kTree);
+    CHECK(std::isfinite(delta_one));
+    CHECK((delta_one > 0.0 && delta_one < 1.0));
+
+    const OptionValuation two(
+        ud(), spec(), PricingMethod::Binomial, BinomialParams{.num_steps = 2});
+    const double delta_two = two.delta(kTree);
+    CHECK(std::isfinite(delta_two));
+    CHECK((delta_two > 0.0 && delta_two < 1.0));
+    CHECK(std::isfinite(two.gamma(kTree)));
+    CHECK(two.gamma(kTree) > 0.0);
+    CHECK(std::isfinite(two.theta(kTree)));
+    CHECK(two.theta(kTree) < 0.0);
+}
+
 TEST_CASE("binomial greeks do not mutate the underlying", "[binomial][purity]") {
     const UnderlyingData underlying = ud();
     const OptionValuation ov(
