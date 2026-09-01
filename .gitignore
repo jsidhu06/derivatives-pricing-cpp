@@ -18,5 +18,8 @@ compile_commands.json
 .venv/
 __pycache__/
 
+# Personal scratch programs (built locally when present, never shipped)
+practice/
+
 # Reference Python implementation (separate git repo, kept locally for porting)
 derivatives-pricing/

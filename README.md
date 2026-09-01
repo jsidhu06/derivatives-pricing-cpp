@@ -78,12 +78,6 @@ Presets: `debug`, `release`, `relwithdebinfo`, `tidy` (clang-tidy on every TU),
 cmake --workflow --preset clang-debug
 ```
 
-Examples live in `examples/` (one executable per file):
-
-```bash
-cmake --build --preset debug --target quick_start && build/debug/examples/quick_start
-```
-
 ### Tooling
 
 ```bash

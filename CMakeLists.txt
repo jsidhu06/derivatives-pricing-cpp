@@ -29,7 +29,6 @@ else()
 endif()
 
 option(DP_BUILD_TESTS "Build the unit tests" ${DP_DEFAULT_BUILD_TESTS})
-option(DP_BUILD_EXAMPLES "Build the example programs" ${DP_DEFAULT_BUILD_TESTS})
 option(DP_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 option(DP_ENABLE_SANITIZERS "Enable AddressSanitizer + UndefinedBehaviorSanitizer" OFF)
 option(DP_ENABLE_CLANG_TIDY "Run clang-tidy as part of the build" OFF)
@@ -101,10 +100,10 @@ if(DP_BUILD_TESTS)
 endif()
 
 # ---------------------------------------------------------------------------
-# Examples
+# Personal scratch programs (untracked; see practice/CMakeLists.txt)
 # ---------------------------------------------------------------------------
-if(DP_BUILD_EXAMPLES)
-    add_subdirectory(examples)
+if(PROJECT_IS_TOP_LEVEL AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/practice/CMakeLists.txt")
+    add_subdirectory(practice)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -115,7 +114,6 @@ message(STATUS "derivatives_pricing ${PROJECT_VERSION}")
 message(STATUS "  Build type:        ${CMAKE_BUILD_TYPE}")
 message(STATUS "  Compiler:          ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
 message(STATUS "  Tests:             ${DP_BUILD_TESTS}")
-message(STATUS "  Examples:          ${DP_BUILD_EXAMPLES}")
 message(STATUS "  Sanitizers:        ${DP_ENABLE_SANITIZERS}")
 message(STATUS "  clang-tidy:        ${DP_ENABLE_CLANG_TIDY}")
 message(STATUS "  Warnings as errors ${DP_WARNINGS_AS_ERRORS}")
