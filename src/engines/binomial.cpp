@@ -9,6 +9,7 @@
 #include <cmath>
 #include <format>
 #include <limits>
+#include <span>
 #include <variant>
 #include <vector>
 
@@ -55,8 +56,8 @@ const BinomialEngine::Setup& BinomialEngine::setup() const {
 
     Eigen::ArrayXd time_grid(n + 1);
     for (int i = 0; i <= n; ++i) {
-        time_grid[i] = year_fraction(start, dates[static_cast<std::size_t>(i)],
-                                     state_.day_count_convention());
+        time_grid[i] =
+            year_fraction(start, dates[static_cast<std::size_t>(i)], state_.day_count_convention());
     }
     const Eigen::ArrayXd dt_steps = time_grid.tail(n) - time_grid.head(n);
     if (!all_close_to_first(dt_steps)) {
@@ -93,8 +94,8 @@ const BinomialEngine::Setup& BinomialEngine::setup() const {
             }
             parts += std::format("exp((r-q)*dt) >= u at {} step(s)", too_high);
         }
-        throw ArbitrageViolationError(
-            "No-arbitrage condition d < exp((r-q)*dt) < u violated: " + parts);
+        throw ArbitrageViolationError("No-arbitrage condition d < exp((r-q)*dt) < u violated: " +
+                                      parts);
     }
 
     // Escrowed dividends: price the tree on spot minus the PV of all future
@@ -103,15 +104,23 @@ const BinomialEngine::Setup& BinomialEngine::setup() const {
     const auto& dividends = state_.underlying.discrete_dividends();
     Eigen::ArrayXd pv_remaining;
     if (!dividends.empty()) {
-        const double pv_all =
-            pv_discrete_dividends(dividends, dates.front(), dates.back(), curve, std::nullopt,
-                                  state_.day_count_convention(), /*include_start=*/true);
+        const double pv_all = pv_discrete_dividends(dividends,
+                                                    dates.front(),
+                                                    dates.back(),
+                                                    curve,
+                                                    std::nullopt,
+                                                    state_.day_count_convention(),
+                                                    /*include_start=*/true);
         spot = std::max(spot - pv_all, 0.0);
         pv_remaining.resize(n + 1);
         for (int t = 0; t <= n; ++t) {
-            pv_remaining[t] = pv_discrete_dividends(
-                dividends, dates.front(), dates.back(), curve, dates[static_cast<std::size_t>(t)],
-                state_.day_count_convention(), /*include_start=*/false);
+            pv_remaining[t] = pv_discrete_dividends(dividends,
+                                                    dates.front(),
+                                                    dates.back(),
+                                                    curve,
+                                                    dates[static_cast<std::size_t>(t)],
+                                                    state_.day_count_convention(),
+                                                    /*include_start=*/false);
         }
     }
 
@@ -202,38 +211,41 @@ const BinomialEngine::Solution& BinomialEngine::solution() const {
     capture_nodes(n);
 
     // Hot-loop inputs hoisted out of the per-node work: the payoff sign
-    // trick (phi * (S - K) == S - K for calls, K - S for puts, bit-exactly),
-    // the dividend add-back per step, and raw pointers the optimiser can
-    // reason about.
+    // trick (phi * (S - K) == S - K for calls, K - S for puts, bit-exactly)
+    // and the dividend add-back per step. The spans are bounds-typed views
+    // over the buffers; indexing them costs the same as raw pointers in a
+    // release build.
     const bool has_dividends = s.pv_remaining.size() > 0;
     const double phi = is_call ? 1.0 : -1.0;
     const double escrowed = s.escrowed_spot;
-    const double* up_powers = s.up_powers.data();
-    double* v = values.data();
+    const std::span<const double> up_powers{s.up_powers.data(),
+                                            static_cast<std::size_t>(s.up_powers.size())};
+    const std::span<double> v{values};
 
     for (int t = n - 1; t >= 0; --t) {
         const double p_up = s.p[t];
         const double p_down = 1.0 - p_up;
         const double df = s.discount_factors[t];
+        const auto last = static_cast<std::size_t>(t);
         // Each specialised loop keeps the reference per-node expression and
         // operation order, so results agree bit-for-bit with the lattice
         // formulation; the split only removes per-node branching.
         if (!early) {
-            for (int i = 0; i <= t; ++i) {
+            for (std::size_t i = 0; i <= last; ++i) {
                 v[i] = (p_up * v[i] + p_down * v[i + 1]) * df;
             }
         } else if (custom == nullptr) {
             const double pv_rem = has_dividends ? s.pv_remaining[t] : 0.0;
-            const int base = n + t;
-            for (int i = 0; i <= t; ++i) {
+            const auto base = static_cast<std::size_t>(n) + static_cast<std::size_t>(t);
+            for (std::size_t i = 0; i <= last; ++i) {
                 const double continuation = (p_up * v[i] + p_down * v[i + 1]) * df;
                 const double spot = escrowed * up_powers[base - 2 * i] + pv_rem;
                 v[i] = std::max(phi * (spot - strike), std::max(continuation, 0.0));
             }
         } else {
-            for (int i = 0; i <= t; ++i) {
+            for (std::size_t i = 0; i <= last; ++i) {
                 const double continuation = (p_up * v[i] + p_down * v[i + 1]) * df;
-                v[i] = std::max(intrinsic(spot_at(s, i, t)), continuation);
+                v[i] = std::max(intrinsic(spot_at(s, static_cast<int>(i), t)), continuation);
             }
         }
         capture_nodes(t);
@@ -244,7 +256,9 @@ const BinomialEngine::Solution& BinomialEngine::solution() const {
     return *solution_;
 }
 
-double BinomialEngine::present_value() const { return solution().pv; }
+double BinomialEngine::present_value() const {
+    return solution().pv;
+}
 
 double BinomialEngine::delta() const {
     const Solution& r = solution();
