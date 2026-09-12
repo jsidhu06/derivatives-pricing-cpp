@@ -60,6 +60,7 @@ target_sources(
             src/dividends.cpp
             src/engines/binomial.cpp
             src/engines/bsm.cpp
+            src/engines/pde.cpp
             src/enums.cpp
             src/forward.cpp
             src/market_data.cpp

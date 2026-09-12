@@ -49,9 +49,9 @@ private:
     /// indices are (down-moves, time)). Step-2 fields are NaN when n < 2.
     struct Solution {
         double pv;
-        double f01, f11, s01, s11;       ///< Step-1 nodes (delta).
-        double f02, f12, f22;            ///< Step-2 values (gamma, theta).
-        double s02, s12, s22;            ///< Step-2 spots (gamma).
+        double f01, f11, s01, s11;  ///< Step-1 nodes (delta).
+        double f02, f12, f22;       ///< Step-2 values (gamma, theta).
+        double s02, s12, s22;       ///< Step-2 spots (gamma).
     };
 
     [[nodiscard]] int num_steps() const;

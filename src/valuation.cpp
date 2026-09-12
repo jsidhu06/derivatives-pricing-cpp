@@ -6,6 +6,7 @@
 #include "engines/binomial.hpp"
 #include "engines/bsm.hpp"
 #include "engines/engine.hpp"
+#include "engines/pde.hpp"
 #include "valuation_state.hpp"
 
 #include <cctype>
@@ -163,8 +164,7 @@ std::unique_ptr<engines::PricingEngine> build_engine(const detail::ValuationStat
         case PricingMethod::Binomial:
             return std::make_unique<engines::BinomialEngine>(state);
         case PricingMethod::PdeFd:
-            throw UnsupportedFeatureError(
-                std::format("{} pricing is not yet implemented in this port.", name(method)));
+            return std::make_unique<engines::PdeEngine>(state);
         case PricingMethod::MonteCarlo:
             break;
     }

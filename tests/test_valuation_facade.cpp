@@ -134,11 +134,6 @@ TEST_CASE("params must match the pricing method", "[valuation]") {
         message_contains("num_steps must be >= 1"));
 }
 
-TEST_CASE("engines not yet ported fail loudly", "[valuation]") {
-    CHECK_THROWS_AS(OptionValuation(ud(), vanilla(), PricingMethod::PdeFd),
-                    UnsupportedFeatureError);
-}
-
 TEST_CASE("describe() summarises the valuation", "[valuation]") {
     const OptionValuation ov(ud(), vanilla(), PricingMethod::Bsm);
     const auto text = ov.describe();

@@ -15,6 +15,7 @@ add_executable(
     test_valuation_binomial.cpp
     test_valuation_bsm.cpp
     test_valuation_facade.cpp
+    test_valuation_pde.cpp
 )
 
 target_link_libraries(dp_tests PRIVATE dp::derivatives_pricing Catch2::Catch2WithMain)
