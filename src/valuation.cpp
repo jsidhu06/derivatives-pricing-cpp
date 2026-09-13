@@ -6,6 +6,7 @@
 #include "engines/binomial.hpp"
 #include "engines/bsm.hpp"
 #include "engines/engine.hpp"
+#include "engines/mc.hpp"
 #include "engines/pde.hpp"
 #include "valuation_state.hpp"
 
@@ -166,13 +167,42 @@ std::unique_ptr<engines::PricingEngine> build_engine(const detail::ValuationStat
         case PricingMethod::PdeFd:
             return std::make_unique<engines::PdeEngine>(state);
         case PricingMethod::MonteCarlo:
-            break;
+            return std::make_unique<engines::McEngine>(state);
     }
-    throw ConfigurationError(
-        "Monte Carlo pricing requires underlying to be a PathSimulation instance");
+    throw ConfigurationError("unknown pricing method");
 }
 
 // ── Greek method resolution ─────────────────────────────────────────
+
+/// Pathwise / likelihood-ratio estimators exist for European vanillas on a
+/// GBM process without discrete dividends (mirrors the Python eligibility).
+bool mc_analytic_eligible(const detail::ValuationState& state) {
+    const auto* vanilla = std::get_if<VanillaSpec>(&state.spec);
+    return state.pricing_method == PricingMethod::MonteCarlo && state.underlying.is_process() &&
+           vanilla != nullptr && vanilla->exercise_type() == ExerciseType::European &&
+           state.underlying.discrete_dividends().empty();
+}
+
+void validate_mc_greek_method(const detail::ValuationState& state, GreekCalculationMethod method) {
+    if (state.pricing_method != PricingMethod::MonteCarlo) {
+        throw ValidationError(std::format(
+            "{} greeks are only available for MONTE_CARLO pricing method.", to_string(method)));
+    }
+    if (!state.underlying.is_process()) {
+        throw ValidationError("MC greeks are only available for GBMProcess underlying.");
+    }
+    const auto* vanilla = std::get_if<VanillaSpec>(&state.spec);
+    if (vanilla == nullptr || vanilla->exercise_type() != ExerciseType::European) {
+        throw ValidationError(std::format(
+            "{} greeks are only implemented for vanilla European options (VanillaSpec).",
+            to_string(method)));
+    }
+    if (!state.underlying.discrete_dividends().empty()) {
+        throw UnsupportedFeatureError(
+            "Pathwise and likelihood-ratio MC Greeks are not supported with discrete "
+            "dividends.");
+    }
+}
 
 GreekCalculationMethod auto_select_greek_method(const detail::ValuationState& state,
                                                 bool tree_capable,
@@ -186,6 +216,9 @@ GreekCalculationMethod auto_select_greek_method(const detail::ValuationState& st
     }
     if (grid_capable && state.pricing_method == PricingMethod::PdeFd) {
         return GreekCalculationMethod::Grid;
+    }
+    if (mc_analytic_eligible(state)) {
+        return GreekCalculationMethod::Pathwise;
     }
     return GreekCalculationMethod::Numerical;
 }
@@ -228,11 +261,7 @@ GreekCalculationMethod resolve_greek_method(const detail::ValuationState& state,
             break;
         case GreekCalculationMethod::Pathwise:
         case GreekCalculationMethod::LikelihoodRatio:
-            if (state.pricing_method != PricingMethod::MonteCarlo) {
-                throw ValidationError(
-                    std::format("{} greeks are only available for MONTE_CARLO pricing method.",
-                                to_string(method)));
-            }
+            validate_mc_greek_method(state, method);
             break;
         case GreekCalculationMethod::Numerical:
             break;
@@ -340,8 +369,10 @@ struct OptionValuation::Impl {
     }
 
     /// Fresh valuation with the same spec/method/params on a bumped underlying.
-    [[nodiscard]] OptionValuation rebuild(UnderlyingData bumped) const {
-        return {std::move(bumped), state.spec, state.pricing_method, state.params};
+    [[nodiscard]] OptionValuation rebuild(const detail::Underlying& bumped) const {
+        return bumped.visit([&](const auto& u) {
+            return OptionValuation(u, state.spec, state.pricing_method, state.params);
+        });
     }
 
     /// European control-variate adjustment for American pricing:
@@ -381,13 +412,16 @@ struct OptionValuation::Impl {
             .contract_size = vanilla->contract_size(),
         });
 
-        const double euro_numerical = OptionValuation(state.underlying,
-                                                      euro_spec,
-                                                      state.pricing_method,
-                                                      without_control_variate(*state.params))
-                                          .present_value();
+        const double euro_numerical =
+            state.underlying
+                .visit([&](const auto& u) {
+                    return OptionValuation(
+                        u, euro_spec, state.pricing_method, without_control_variate(*state.params));
+                })
+                .present_value();
         const double euro_bsm =
-            OptionValuation(state.underlying, euro_spec, PricingMethod::Bsm).present_value();
+            OptionValuation(state.underlying.as_underlying_data(), euro_spec, PricingMethod::Bsm)
+                .present_value();
 
         return base_pv + (euro_bsm - euro_numerical);
     }
@@ -403,6 +437,24 @@ OptionValuation::OptionValuation(UnderlyingData underlying,
                                  OptionSpec spec,
                                  PricingMethod pricing_method,
                                  std::optional<ValuationParams> params) {
+    init(detail::Underlying(std::move(underlying)),
+         std::move(spec),
+         pricing_method,
+         std::move(params));
+}
+
+OptionValuation::OptionValuation(GbmProcess process,
+                                 OptionSpec spec,
+                                 PricingMethod pricing_method,
+                                 std::optional<ValuationParams> params) {
+    init(
+        detail::Underlying(std::move(process)), std::move(spec), pricing_method, std::move(params));
+}
+
+void OptionValuation::init(detail::Underlying underlying,
+                           OptionSpec spec,
+                           PricingMethod pricing_method,
+                           std::optional<ValuationParams> params) {
     const auto& spec_currency = currency_of(spec);
     if (spec_currency.has_value() && *spec_currency != underlying.currency()) {
         throw UnsupportedFeatureError(
@@ -422,9 +474,14 @@ OptionValuation::OptionValuation(UnderlyingData underlying,
         throw ValidationError("Option maturity must be after pricing_date.");
     }
 
-    if (pricing_method == PricingMethod::MonteCarlo) {
+    if (pricing_method == PricingMethod::MonteCarlo && !underlying.is_process()) {
         throw ConfigurationError(
-            "Monte Carlo pricing requires underlying to be a PathSimulation instance");
+            "Monte Carlo pricing requires underlying to be a GbmProcess instance");
+    }
+    if (pricing_method != PricingMethod::MonteCarlo && underlying.is_process()) {
+        throw ConfigurationError(
+            std::format("{} pricing requires an UnderlyingData instance, got GbmProcess.",
+                        name(pricing_method)));
     }
 
     auto resolved_params = resolve_params(pricing_method, params, spec);
@@ -481,6 +538,12 @@ double OptionValuation::delta(GreekOptions options) const {
         const auto& state = impl_->state;
         const auto method = resolve_greek_method(state, options.method, true, true);
         validate_bump(options.bump, method, "epsilon");
+        if (method == GreekCalculationMethod::Pathwise) {
+            return impl_->engine->delta_pathwise();
+        }
+        if (method == GreekCalculationMethod::LikelihoodRatio) {
+            return impl_->engine->delta_lr();
+        }
         if (method != GreekCalculationMethod::Numerical) {
             return impl_->engine->delta();
         }
@@ -502,6 +565,9 @@ double OptionValuation::gamma(GreekOptions options) const {
                 "likelihood_ratio is not available for gamma. Use PATHWISE (central-difference "
                 "of pathwise delta) or NUMERICAL.");
         }
+        if (method == GreekCalculationMethod::Pathwise) {
+            return impl_->engine->gamma_pathwise_fd(options.bump);
+        }
         if (method != GreekCalculationMethod::Numerical) {
             return impl_->engine->gamma();
         }
@@ -519,6 +585,12 @@ double OptionValuation::vega(GreekOptions options) const {
         const auto& state = impl_->state;
         const auto method = resolve_greek_method(state, options.method);
         validate_bump(options.bump, method, "epsilon");
+        if (method == GreekCalculationMethod::Pathwise) {
+            return impl_->engine->vega_pathwise();
+        }
+        if (method == GreekCalculationMethod::LikelihoodRatio) {
+            return impl_->engine->vega_lr();
+        }
         if (method != GreekCalculationMethod::Numerical) {
             return impl_->engine->vega();
         }
@@ -535,6 +607,12 @@ double OptionValuation::theta(GreekOptions options) const {
         const auto& state = impl_->state;
         const auto method = resolve_greek_method(state, options.method, true, true);
         validate_bump(options.bump, method, "time_bump_days");
+        if (method == GreekCalculationMethod::Pathwise) {
+            return impl_->engine->theta_pathwise();
+        }
+        if (method == GreekCalculationMethod::LikelihoodRatio) {
+            return impl_->engine->theta_lr();
+        }
         if (method != GreekCalculationMethod::Numerical) {
             return impl_->engine->theta();
         }
@@ -555,6 +633,12 @@ double OptionValuation::rho(GreekOptions options) const {
         const auto& state = impl_->state;
         const auto method = resolve_greek_method(state, options.method);
         validate_bump(options.bump, method, "rate_bump");
+        if (method == GreekCalculationMethod::Pathwise) {
+            return impl_->engine->rho_pathwise();
+        }
+        if (method == GreekCalculationMethod::LikelihoodRatio) {
+            return impl_->engine->rho_lr();
+        }
         if (method != GreekCalculationMethod::Numerical) {
             return impl_->engine->rho();
         }
@@ -570,8 +654,8 @@ double OptionValuation::rho(GreekOptions options) const {
 
 // ── Accessors ───────────────────────────────────────────────────────
 
-const UnderlyingData& OptionValuation::underlying() const noexcept {
-    return impl_->state.underlying;
+const std::variant<UnderlyingData, GbmProcess>& OptionValuation::underlying() const noexcept {
+    return impl_->state.underlying.value();
 }
 const OptionSpec& OptionValuation::spec() const noexcept {
     return impl_->state.spec;
@@ -600,13 +684,13 @@ ExerciseType OptionValuation::exercise_type() const {
 double OptionValuation::contract_size() const {
     return contract_size_of(impl_->state.spec);
 }
-DateTime OptionValuation::pricing_date() const noexcept {
+DateTime OptionValuation::pricing_date() const {
     return impl_->state.pricing_date();
 }
-const DiscountCurve& OptionValuation::discount_curve() const noexcept {
+const DiscountCurve& OptionValuation::discount_curve() const {
     return impl_->state.discount_curve();
 }
-DayCountConvention OptionValuation::day_count_convention() const noexcept {
+DayCountConvention OptionValuation::day_count_convention() const {
     return impl_->state.day_count_convention();
 }
 double OptionValuation::maturity_year_fraction() const {

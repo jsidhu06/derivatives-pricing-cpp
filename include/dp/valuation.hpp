@@ -5,15 +5,21 @@
 #include "dp/discount_curve.hpp"
 #include "dp/enums.hpp"
 #include "dp/params.hpp"
+#include "dp/simulation.hpp"
 #include "dp/underlying.hpp"
 
 #include <memory>
 #include <optional>
 #include <string>
+#include <variant>
 
 /// Valuation facade: dispatches a contract spec + underlying + pricing method
 /// to an engine, and exposes cached present value and Greeks.
 namespace dp {
+
+namespace detail {
+class Underlying;
+}  // namespace detail
 
 /// Options for a Greek request.
 ///
@@ -45,6 +51,11 @@ public:
                     OptionSpec spec,
                     PricingMethod pricing_method,
                     std::optional<ValuationParams> params = std::nullopt);
+    /// Monte Carlo pricing: the underlying is a path process.
+    OptionValuation(GbmProcess process,
+                    OptionSpec spec,
+                    PricingMethod pricing_method,
+                    std::optional<ValuationParams> params = std::nullopt);
     ~OptionValuation();
 
     OptionValuation(OptionValuation&&) noexcept;
@@ -66,7 +77,9 @@ public:
     /// dV/dr per 1% parallel rate move.
     [[nodiscard]] double rho(GreekOptions options = {}) const;
 
-    [[nodiscard]] const UnderlyingData& underlying() const noexcept;
+    /// The underlying as constructed: `UnderlyingData` for deterministic
+    /// engines, `GbmProcess` for Monte Carlo.
+    [[nodiscard]] const std::variant<UnderlyingData, GbmProcess>& underlying() const noexcept;
     [[nodiscard]] const OptionSpec& spec() const noexcept;
     [[nodiscard]] PricingMethod pricing_method() const noexcept;
     [[nodiscard]] const std::optional<ValuationParams>& params() const noexcept;
@@ -76,9 +89,9 @@ public:
     [[nodiscard]] const std::string& currency() const noexcept;
     [[nodiscard]] ExerciseType exercise_type() const;
     [[nodiscard]] double contract_size() const;
-    [[nodiscard]] DateTime pricing_date() const noexcept;
-    [[nodiscard]] const DiscountCurve& discount_curve() const noexcept;
-    [[nodiscard]] DayCountConvention day_count_convention() const noexcept;
+    [[nodiscard]] DateTime pricing_date() const;
+    [[nodiscard]] const DiscountCurve& discount_curve() const;
+    [[nodiscard]] DayCountConvention day_count_convention() const;
 
     /// Time to maturity in years under the valuation day-count convention.
     [[nodiscard]] double maturity_year_fraction() const;
@@ -90,6 +103,10 @@ public:
 
 private:
     struct Impl;
+    void init(detail::Underlying underlying,
+              OptionSpec spec,
+              PricingMethod pricing_method,
+              std::optional<ValuationParams> params);
     std::unique_ptr<Impl> impl_;
 };
 

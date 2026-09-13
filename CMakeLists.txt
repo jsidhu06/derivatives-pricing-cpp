@@ -60,12 +60,14 @@ target_sources(
             src/dividends.cpp
             src/engines/binomial.cpp
             src/engines/bsm.cpp
+            src/engines/mc.cpp
             src/engines/pde.cpp
             src/enums.cpp
             src/forward.cpp
             src/market_data.cpp
             src/math/normal.cpp
             src/params.cpp
+            src/simulation.cpp
             src/underlying.cpp
             src/valuation.cpp
 )
@@ -76,7 +78,9 @@ target_include_directories(
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-target_link_libraries(derivatives_pricing PUBLIC Eigen3::Eigen Boost::math PRIVATE spdlog::spdlog)
+target_link_libraries(
+    derivatives_pricing PUBLIC Eigen3::Eigen Boost::math PRIVATE pcg::pcg spdlog::spdlog
+)
 
 target_compile_features(derivatives_pricing PUBLIC cxx_std_20)
 dp_set_project_warnings(derivatives_pricing)

@@ -63,7 +63,7 @@ TEST_CASE("OptionValuation exposes its inputs", "[valuation]") {
     CHECK(ov.currency() == "USD");
     CHECK(ov.contract_size() == 100.0);
     CHECK_FALSE(ov.params().has_value());
-    CHECK(ov.underlying().initial_value() == 100.0);
+    CHECK(std::get<UnderlyingData>(ov.underlying()).initial_value() == 100.0);
     CHECK(std::holds_alternative<VanillaSpec>(ov.spec()));
     CHECK(ov.maturity_year_fraction() == 1.0);
 }
@@ -113,7 +113,7 @@ TEST_CASE("BSM rejects PayoffSpec", "[valuation]") {
 TEST_CASE("Monte Carlo requires a path simulation", "[valuation]") {
     CHECK_THROWS_MATCHES(OptionValuation(ud(), vanilla(), PricingMethod::MonteCarlo),
                          ConfigurationError,
-                         message_contains("PathSimulation"));
+                         message_contains("GbmProcess"));
 }
 
 TEST_CASE("params must match the pricing method", "[valuation]") {
@@ -263,6 +263,6 @@ TEST_CASE("pricing and Greeks do not mutate the underlying", "[valuation][purity
     const auto q_rate = underlying.dividend_curve().value_or(DiscountCurve::flat(0.0)).flat_rate();
     CHECK_THAT(q_rate.value_or(0.0), WithinRel(0.02, 1e-12));
     // The valuation's own copy is likewise untouched.
-    CHECK(ov.underlying().initial_value() == 100.0);
-    CHECK(ov.underlying().volatility() == 0.2);
+    CHECK(std::get<UnderlyingData>(ov.underlying()).initial_value() == 100.0);
+    CHECK(std::get<UnderlyingData>(ov.underlying()).volatility() == 0.2);
 }

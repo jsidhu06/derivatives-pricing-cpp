@@ -41,6 +41,23 @@ if(NOT TARGET Boost::math)
     target_compile_definitions(boost_math INTERFACE BOOST_MATH_STANDALONE=1)
 endif()
 
+# --- PCG (random number engine) ----------------------------------------------
+# Header-only. Same generator family as numpy's default BitGenerator; streams are NOT
+# numpy-compatible (by design — MC agreement with the Python reference is statistical, never
+# bitwise).
+fetchcontent_declare(
+    pcg_cpp
+    GIT_REPOSITORY https://github.com/imneme/pcg-cpp.git
+    GIT_TAG 428802d1a5634f96bcd0705fab379ff0113bcf13
+    SOURCE_SUBDIR cmake-skip-subdir SYSTEM
+)
+fetchcontent_makeavailable(pcg_cpp)
+if(NOT TARGET pcg::pcg)
+    add_library(pcg_cpp_headers INTERFACE)
+    add_library(pcg::pcg ALIAS pcg_cpp_headers)
+    target_include_directories(pcg_cpp_headers SYSTEM INTERFACE "${pcg_cpp_SOURCE_DIR}/include")
+endif()
+
 # --- spdlog -----------------------------------------------------------------
 set(SPDLOG_INSTALL OFF CACHE BOOL "" FORCE)
 set(SPDLOG_BUILD_EXAMPLE OFF CACHE BOOL "" FORCE)

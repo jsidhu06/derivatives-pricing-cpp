@@ -3,6 +3,7 @@
 #include "dp/exceptions.hpp"
 
 #include <format>
+#include <optional>
 #include <string_view>
 
 /// Internal: interface implemented by every pricing engine.
@@ -29,6 +30,20 @@ public:
     [[nodiscard]] virtual double vega() const { return unsupported("vega"); }
     [[nodiscard]] virtual double theta() const { return unsupported("theta"); }
     [[nodiscard]] virtual double rho() const { return unsupported("rho"); }
+
+    // Monte Carlo estimators (pathwise / likelihood-ratio); only the MC
+    // engine provides them, and the facade validates eligibility first.
+    [[nodiscard]] virtual double delta_pathwise() const { return unsupported("delta_pathwise"); }
+    [[nodiscard]] virtual double vega_pathwise() const { return unsupported("vega_pathwise"); }
+    [[nodiscard]] virtual double theta_pathwise() const { return unsupported("theta_pathwise"); }
+    [[nodiscard]] virtual double rho_pathwise() const { return unsupported("rho_pathwise"); }
+    [[nodiscard]] virtual double delta_lr() const { return unsupported("delta_lr"); }
+    [[nodiscard]] virtual double vega_lr() const { return unsupported("vega_lr"); }
+    [[nodiscard]] virtual double theta_lr() const { return unsupported("theta_lr"); }
+    [[nodiscard]] virtual double rho_lr() const { return unsupported("rho_lr"); }
+    [[nodiscard]] virtual double gamma_pathwise_fd(std::optional<double> /*epsilon*/) const {
+        return unsupported("gamma_pathwise_fd");
+    }
 
 protected:
     PricingEngine() = default;
