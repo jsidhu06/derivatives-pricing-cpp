@@ -178,7 +178,7 @@ std::unique_ptr<engines::PricingEngine> build_engine(const detail::ValuationStat
 /// GBM process without discrete dividends (mirrors the Python eligibility).
 bool mc_analytic_eligible(const detail::ValuationState& state) {
     const auto* vanilla = std::get_if<VanillaSpec>(&state.spec);
-    return state.pricing_method == PricingMethod::MonteCarlo && state.underlying.is_process() &&
+    return state.pricing_method == PricingMethod::MonteCarlo && state.underlying.is_gbm() &&
            vanilla != nullptr && vanilla->exercise_type() == ExerciseType::European &&
            state.underlying.discrete_dividends().empty();
 }
@@ -188,7 +188,7 @@ void validate_mc_greek_method(const detail::ValuationState& state, GreekCalculat
         throw ValidationError(std::format(
             "{} greeks are only available for MONTE_CARLO pricing method.", to_string(method)));
     }
-    if (!state.underlying.is_process()) {
+    if (!state.underlying.is_gbm()) {
         throw ValidationError("MC greeks are only available for GBMProcess underlying.");
     }
     const auto* vanilla = std::get_if<VanillaSpec>(&state.spec);
@@ -437,18 +437,28 @@ OptionValuation::OptionValuation(UnderlyingData underlying,
                                  OptionSpec spec,
                                  PricingMethod pricing_method,
                                  std::optional<ValuationParams> params) {
-    init(detail::Underlying(std::move(underlying)),
-         std::move(spec),
-         pricing_method,
-         std::move(params));
+    init(detail::Underlying(std::move(underlying)), std::move(spec), pricing_method, params);
 }
 
 OptionValuation::OptionValuation(GbmProcess process,
                                  OptionSpec spec,
                                  PricingMethod pricing_method,
                                  std::optional<ValuationParams> params) {
-    init(
-        detail::Underlying(std::move(process)), std::move(spec), pricing_method, std::move(params));
+    init(detail::Underlying(std::move(process)), std::move(spec), pricing_method, params);
+}
+
+OptionValuation::OptionValuation(JdProcess process,
+                                 OptionSpec spec,
+                                 PricingMethod pricing_method,
+                                 std::optional<ValuationParams> params) {
+    init(detail::Underlying(std::move(process)), std::move(spec), pricing_method, params);
+}
+
+OptionValuation::OptionValuation(SrdProcess process,
+                                 OptionSpec spec,
+                                 PricingMethod pricing_method,
+                                 std::optional<ValuationParams> params) {
+    init(detail::Underlying(std::move(process)), std::move(spec), pricing_method, params);
 }
 
 void OptionValuation::init(detail::Underlying underlying,
@@ -476,12 +486,15 @@ void OptionValuation::init(detail::Underlying underlying,
 
     if (pricing_method == PricingMethod::MonteCarlo && !underlying.is_process()) {
         throw ConfigurationError(
-            "Monte Carlo pricing requires underlying to be a GbmProcess instance");
+            "Monte Carlo pricing requires underlying to be a path process instance "
+            "(GbmProcess, JdProcess, or SrdProcess)");
     }
     if (pricing_method != PricingMethod::MonteCarlo && underlying.is_process()) {
         throw ConfigurationError(
-            std::format("{} pricing requires an UnderlyingData instance, got GbmProcess.",
-                        name(pricing_method)));
+            std::format("{} pricing requires an UnderlyingData instance, "
+                        "got {}.",
+                        name(pricing_method),
+                        underlying.type_name()));
     }
 
     auto resolved_params = resolve_params(pricing_method, params, spec);
@@ -654,7 +667,8 @@ double OptionValuation::rho(GreekOptions options) const {
 
 // ── Accessors ───────────────────────────────────────────────────────
 
-const std::variant<UnderlyingData, GbmProcess>& OptionValuation::underlying() const noexcept {
+const std::variant<UnderlyingData, GbmProcess, JdProcess, SrdProcess>& OptionValuation::underlying()
+    const noexcept {
     return impl_->state.underlying.value();
 }
 const OptionSpec& OptionValuation::spec() const noexcept {

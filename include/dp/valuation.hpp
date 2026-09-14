@@ -56,6 +56,14 @@ public:
                     OptionSpec spec,
                     PricingMethod pricing_method,
                     std::optional<ValuationParams> params = std::nullopt);
+    OptionValuation(JdProcess process,
+                    OptionSpec spec,
+                    PricingMethod pricing_method,
+                    std::optional<ValuationParams> params = std::nullopt);
+    OptionValuation(SrdProcess process,
+                    OptionSpec spec,
+                    PricingMethod pricing_method,
+                    std::optional<ValuationParams> params = std::nullopt);
     ~OptionValuation();
 
     OptionValuation(OptionValuation&&) noexcept;
@@ -79,7 +87,8 @@ public:
 
     /// The underlying as constructed: `UnderlyingData` for deterministic
     /// engines, `GbmProcess` for Monte Carlo.
-    [[nodiscard]] const std::variant<UnderlyingData, GbmProcess>& underlying() const noexcept;
+    [[nodiscard]] const std::variant<UnderlyingData, GbmProcess, JdProcess, SrdProcess>&
+    underlying() const noexcept;
     [[nodiscard]] const OptionSpec& spec() const noexcept;
     [[nodiscard]] PricingMethod pricing_method() const noexcept;
     [[nodiscard]] const std::optional<ValuationParams>& params() const noexcept;

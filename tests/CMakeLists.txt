@@ -11,6 +11,7 @@ add_executable(
     test_market_data.cpp
     test_normal.cpp
     test_params.cpp
+    test_simulation_processes.cpp
     test_underlying.cpp
     test_valuation_binomial.cpp
     test_valuation_bsm.cpp

@@ -26,7 +26,7 @@ are in place:
 | BSM engine | (internal) | closed-form European vanilla PV + analytical Greeks |
 | Binomial engine | (internal) | CRR trees: vanilla + custom payoffs, European/American, escrowed discrete dividends, tree Greeks, arbitrage guard, European control variate |
 | PDE engine | (internal) | implicit / explicit / explicit-Hull / Rannacher-CN on spot or log-spot grids; PSOR or intrinsic American; dividend jump conditions; affine boundary models; CFL guard; grid Greeks |
-| Simulation | `dp/simulation.hpp` | `GbmProcess` + `SimulationConfig`: PCG64 + inverse-CDF normals, antithetic + moment matching, observation-date grids, discrete dividends |
+| Simulation | `dp/simulation.hpp` | `GbmProcess` / `JdProcess` (Merton) / `SrdProcess` (CIR, full-truncation Euler) + `SimulationConfig`: PCG64 + inverse-CDF normals, antithetic + moment matching, observation-date grids, discrete dividends; `CorrelationContext` for Cholesky-correlated multi-asset draws |
 | MC engine | (internal) | European (discounted terminal payoff) and American (ridge-regularised Laguerre Longstaff-Schwartz); pathwise + likelihood-ratio Greeks; CRN by default; std-error monitor |
 
 Engines are verified against the Python reference implementation on golden
@@ -38,11 +38,12 @@ reference package installed editable from `derivatives-pricing/`).
 Monte Carlo agreement with the Python reference is *statistical* (the RNG
 streams are deliberately not numpy-compatible): estimators are tested
 against BSM analytical values and the binomial American price, plus
-seed-pinned reproducibility.
+seed-pinned reproducibility. The jump-diffusion engine is additionally
+tested against the Merton (1976) closed-form series and the square-root
+diffusion against the exact CIR conditional mean.
 
-Planned (in order): JD/SRD processes and multi-asset correlation → barrier
-analytics and implied vol → pybind11 bindings. Asian options are out of
-scope for v1.
+Planned (in order): barrier analytics and implied vol → pybind11 bindings.
+Asian options are out of scope for v1.
 
 ## Quick start
 

@@ -175,7 +175,7 @@ McEngine::McEngine(const detail::ValuationState& state) : state_(state) {}
 
 const SimulationResult& McEngine::simulation() const {
     if (!simulation_.has_value()) {
-        simulation_.emplace(state_.underlying.process().simulate(mc_params(state_).random_seed));
+        simulation_.emplace(state_.underlying.simulate(mc_params(state_).random_seed));
     }
     return *simulation_;
 }

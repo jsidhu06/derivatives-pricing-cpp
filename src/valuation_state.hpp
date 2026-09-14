@@ -9,6 +9,8 @@
 #include "dp/simulation.hpp"
 #include "dp/underlying.hpp"
 
+#include <cstdint>
+#include <format>
 #include <optional>
 #include <string>
 #include <utility>
@@ -20,33 +22,61 @@
 namespace dp::detail {
 
 /// Either a deterministic-engine underlying (`UnderlyingData`) or a Monte
-/// Carlo path process (`GbmProcess`). Forwards the accessors the two share,
-/// so engines are written against one interface.
+/// Carlo path process (GBM, jump diffusion, or square-root diffusion).
+/// Forwards the accessors the alternatives share, so engines are written
+/// against one interface.
 class Underlying {
 public:
     // NOLINTBEGIN(google-explicit-constructor): deliberate implicit lift.
     Underlying(UnderlyingData data) : v_(std::move(data)) {}
     Underlying(GbmProcess process) : v_(std::move(process)) {}
+    Underlying(JdProcess process) : v_(std::move(process)) {}
+    Underlying(SrdProcess process) : v_(std::move(process)) {}
     // NOLINTEND(google-explicit-constructor)
 
     [[nodiscard]] bool is_process() const noexcept {
-        return std::holds_alternative<GbmProcess>(v_);
+        return !std::holds_alternative<UnderlyingData>(v_);
     }
-    [[nodiscard]] const GbmProcess& process() const {
-        const auto* p = std::get_if<GbmProcess>(&v_);
-        if (p == nullptr) {
-            throw ConfigurationError("underlying is not a path process");
-        }
-        return *p;
+    /// True for the one process whose paths are log-normal (pathwise/LR
+    /// Greeks and the BSM control-variate leg are GBM-only).
+    [[nodiscard]] bool is_gbm() const noexcept { return std::holds_alternative<GbmProcess>(v_); }
+
+    [[nodiscard]] std::string_view type_name() const {
+        return std::visit(
+            [](const auto& u) -> std::string_view {
+                using T = std::decay_t<decltype(u)>;
+                if constexpr (std::is_same_v<T, UnderlyingData>) {
+                    return "UnderlyingData";
+                } else if constexpr (std::is_same_v<T, GbmProcess>) {
+                    return "GbmProcess";
+                } else if constexpr (std::is_same_v<T, JdProcess>) {
+                    return "JdProcess";
+                } else {
+                    return "SrdProcess";
+                }
+            },
+            v_);
     }
 
-    [[nodiscard]] const std::variant<UnderlyingData, GbmProcess>& value() const noexcept {
+    [[nodiscard]] const std::variant<UnderlyingData, GbmProcess, JdProcess, SrdProcess>& value()
+        const noexcept {
         return v_;
     }
 
     template <typename F>
     decltype(auto) visit(F&& f) const {
         return std::visit(std::forward<F>(f), v_);
+    }
+
+    /// Run the path process; throws `ConfigurationError` for `UnderlyingData`.
+    [[nodiscard]] SimulationResult simulate(std::optional<std::uint64_t> seed) const {
+        return visit([&](const auto& u) -> SimulationResult {
+            if constexpr (requires { u.simulate(seed); }) {
+                return u.simulate(seed);
+            } else {
+                throw ConfigurationError("underlying is not a path process");
+            }
+        });
     }
 
     [[nodiscard]] double initial_value() const {
@@ -92,21 +122,25 @@ public:
     }
 
     /// Deterministic-engine view (for the BSM control-variate leg). Lossless
-    /// for `UnderlyingData` and GBM processes.
+    /// for `UnderlyingData` and GBM processes; other processes would silently
+    /// drop their jump / mean-reversion parameters, so they are rejected.
     [[nodiscard]] UnderlyingData as_underlying_data() const {
         if (const auto* data = std::get_if<UnderlyingData>(&v_)) {
             return *data;
         }
-        const auto& p = std::get<GbmProcess>(v_);
-        return {p.initial_value(),
-                p.volatility(),
-                p.market_data(),
-                p.discrete_dividends(),
-                p.dividend_curve()};
+        if (const auto* p = std::get_if<GbmProcess>(&v_)) {
+            return {p->initial_value(),
+                    p->volatility(),
+                    p->market_data(),
+                    p->discrete_dividends(),
+                    p->dividend_curve()};
+        }
+        throw ConfigurationError(
+            std::format("Expected UnderlyingData or GbmProcess, got {}.", type_name()));
     }
 
 private:
-    std::variant<UnderlyingData, GbmProcess> v_;
+    std::variant<UnderlyingData, GbmProcess, JdProcess, SrdProcess> v_;
 };
 
 struct ValuationState {

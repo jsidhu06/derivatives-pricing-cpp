@@ -220,7 +220,7 @@ TEST_CASE("pricing method and underlying type must pair up", "[mc][valuation]") 
     const UnderlyingData ud(100.0, 0.20, md());
     CHECK_THROWS_MATCHES(OptionValuation(ud, spec(OptionType::Call), PricingMethod::MonteCarlo),
                          ConfigurationError,
-                         message_contains("requires underlying to be a GbmProcess"));
+                         message_contains("requires underlying to be a path process"));
     CHECK_THROWS_MATCHES(OptionValuation(gbm(100), spec(OptionType::Call), PricingMethod::Bsm),
                          ConfigurationError,
                          message_contains("BSM pricing requires an UnderlyingData instance"));
