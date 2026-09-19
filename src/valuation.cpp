@@ -3,6 +3,8 @@
 #include "dp/diagnostics.hpp"
 #include "dp/exceptions.hpp"
 
+#include "detail/barrier.hpp"
+#include "engines/barrier_analytical.hpp"
 #include "engines/binomial.hpp"
 #include "engines/bsm.hpp"
 #include "engines/engine.hpp"
@@ -14,8 +16,10 @@
 #include <chrono>
 #include <compare>
 #include <format>
+#include <functional>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <utility>
 #include <variant>
@@ -120,26 +124,6 @@ std::optional<ValuationParams> resolve_params(PricingMethod method,
         std::format("pricing_method={} does not accept valuation params", name(method)));
 }
 
-// ── Barrier schedule ────────────────────────────────────────────────
-
-/// Monitoring dates for a DISCRETE barrier; nullopt for CONTINUOUS.
-std::optional<std::vector<DateTime>> barrier_monitoring_dates(const detail::ValuationState& state) {
-    const auto& spec = std::get<BarrierSpec>(state.spec);
-    if (spec.monitoring() == BarrierMonitoring::Continuous) {
-        return std::nullopt;
-    }
-    if (spec.monitoring_dates().has_value()) {
-        return spec.monitoring_dates();
-    }
-    // N+1 points from pricing_date to maturity; drop t=0 to leave N dates at
-    // T/N, 2T/N, ..., T (the academic convention for discrete monitoring).
-    auto grid = date_range(state.pricing_date(),
-                           state.maturity(),
-                           static_cast<std::size_t>(*spec.num_observations()) + 1);
-    grid.erase(grid.begin());
-    return grid;
-}
-
 // ── Engine dispatch ─────────────────────────────────────────────────
 
 std::unique_ptr<engines::PricingEngine> build_engine(const detail::ValuationState& state) {
@@ -147,6 +131,15 @@ std::unique_ptr<engines::PricingEngine> build_engine(const detail::ValuationStat
     const auto exercise = state.exercise_type();
 
     if (std::holds_alternative<BarrierSpec>(state.spec)) {
+        if (method == PricingMethod::Bsm) {
+            if (exercise != ExerciseType::European) {
+                throw UnsupportedFeatureError(
+                    "BSM is only applicable to European option valuation. Select a different "
+                    "pricing method for American options such as Binomial, PDE_FD or "
+                    "MONTE_CARLO.");
+            }
+            return std::make_unique<engines::AnalyticalBarrierEngine>(state);
+        }
         throw UnsupportedFeatureError(std::format(
             "Barrier options with {} exercise do not yet support {} pricing in this port.",
             name(exercise),
@@ -317,6 +310,39 @@ void validate_bump(std::optional<double> bump,
         bump_name));
 }
 
+/// Block NUMERICAL bump-and-revalue on barrier greek/engine combinations
+/// known to be unreliable: gamma on MC barriers (central-difference noise
+/// dominates the signal at practical path counts) and theta on discretely
+/// monitored barriers (bumping the pricing date re-resolves the monitoring
+/// schedule, so the bumped side is a different contract).
+void reject_barrier_numerical(const detail::ValuationState& state,
+                              GreekCalculationMethod method,
+                              std::string_view greek,
+                              std::string_view reason,
+                              std::optional<PricingMethod> engine_constraint,
+                              std::optional<BarrierMonitoring> monitoring_constraint) {
+    if (method != GreekCalculationMethod::Numerical) {
+        return;
+    }
+    const auto* spec = std::get_if<BarrierSpec>(&state.spec);
+    if (spec == nullptr) {
+        return;
+    }
+    if (engine_constraint.has_value() && state.pricing_method != *engine_constraint) {
+        return;
+    }
+    if (monitoring_constraint.has_value() && spec->monitoring() != *monitoring_constraint) {
+        return;
+    }
+    throw UnsupportedFeatureError(
+        std::format("Numerical {} is not supported for this barrier valuation: {}. Use "
+                    "PricingMethod.PDE_FD (GRID) or PricingMethod.BINOMIAL (TREE) for accurate "
+                    "barrier {}.",
+                    greek,
+                    reason,
+                    greek));
+}
+
 /// True when the method-specific params carry `control_variate_european`.
 bool control_variate_requested(const std::optional<ValuationParams>& params) {
     if (!params.has_value()) {
@@ -373,6 +399,63 @@ struct OptionValuation::Impl {
         return bumped.visit([&](const auto& u) {
             return OptionValuation(u, state.spec, state.pricing_method, state.params);
         });
+    }
+
+    /// The vanilla valuation an inception-triggered knock-in collapses to.
+    [[nodiscard]] OptionValuation vanilla_equivalent() const {
+        const auto& barrier = std::get<BarrierSpec>(state.spec);
+        const VanillaSpec vanilla({.option_type = barrier.option_type(),
+                                   .exercise_type = barrier.exercise_type(),
+                                   .strike = barrier.strike(),
+                                   .maturity = barrier.maturity(),
+                                   .currency = barrier.currency(),
+                                   .contract_size = barrier.contract_size()});
+        return state.underlying.visit([&](const auto& u) {
+            return OptionValuation(u, vanilla, state.pricing_method, state.params);
+        });
+    }
+
+    /// Short-circuit value for a NUMERICAL greek on a barrier triggered at
+    /// inception, or nullopt when no short-circuit applies. Bumping the
+    /// underlying could push the spot across the trigger boundary, so the
+    /// central difference would compare two structurally different
+    /// contracts. Knock-in: delegate to the vanilla equivalent. Knock-out:
+    /// zero, except the AT_EXPIRY-rebate sensitivity `ko_at_expiry` covers
+    /// (theta, rho); the discounted rebate is insensitive to every other bump.
+    [[nodiscard]] std::optional<double> barrier_inception_triggered_greek(
+        GreekKind kind,
+        std::optional<double> bump,
+        const std::function<double(const BarrierSpec&)>& ko_at_expiry = {}) const {
+        const auto* barrier = std::get_if<BarrierSpec>(&state.spec);
+        if (barrier == nullptr || !detail::barrier_triggered_at_inception(state)) {
+            return std::nullopt;
+        }
+        if (barrier->action() == BarrierAction::In) {
+            const OptionValuation vanilla = vanilla_equivalent();
+            const GreekOptions numerical{.method = GreekCalculationMethod::Numerical, .bump = bump};
+            switch (kind) {
+                case GreekKind::Delta:
+                    return vanilla.delta(numerical);
+                case GreekKind::Gamma:
+                    return vanilla.gamma(numerical);
+                case GreekKind::Vega:
+                    return vanilla.vega(numerical);
+                case GreekKind::Theta:
+                    return vanilla.theta(numerical);
+                case GreekKind::Rho:
+                    return vanilla.rho(numerical);
+                case GreekKind::PresentValue:
+                    break;
+            }
+            throw ConfigurationError("unexpected greek kind in barrier short-circuit");
+        }
+        if (barrier->rebate() <= 0.0 || barrier->rebate_timing() == RebateTiming::AtHit) {
+            return 0.0;
+        }
+        if (!ko_at_expiry) {
+            return 0.0;
+        }
+        return ko_at_expiry(*barrier);
     }
 
     /// European control-variate adjustment for American pricing:
@@ -518,7 +601,7 @@ void OptionValuation::init(detail::Underlying underlying,
     });
 
     if (impl_->is_barrier()) {
-        const auto dates = barrier_monitoring_dates(impl_->state);
+        const auto dates = detail::barrier_monitoring_dates(impl_->state);
         if (dates.has_value() && dates->front() < impl_->state.pricing_date()) {
             throw ValidationError(
                 "Barrier monitoring schedule must not start before pricing_date.");
@@ -560,8 +643,13 @@ double OptionValuation::delta(GreekOptions options) const {
         if (method != GreekCalculationMethod::Numerical) {
             return impl_->engine->delta();
         }
+        if (const auto triggered =
+                impl_->barrier_inception_triggered_greek(GreekKind::Delta, options.bump)) {
+            return *triggered;
+        }
         const double s0 = state.underlying.initial_value();
-        const double eps = options.bump.value_or(s0 / 100.0);
+        const double eps =
+            detail::resolve_barrier_spot_bump(state, options.bump.value_or(s0 / 100.0));
         const auto up = impl_->rebuild(state.underlying.with_initial_value(s0 + eps));
         const auto dn = impl_->rebuild(state.underlying.with_initial_value(s0 - eps));
         return (up.present_value() - dn.present_value()) / (2.0 * eps);
@@ -584,8 +672,20 @@ double OptionValuation::gamma(GreekOptions options) const {
         if (method != GreekCalculationMethod::Numerical) {
             return impl_->engine->gamma();
         }
+        if (const auto triggered =
+                impl_->barrier_inception_triggered_greek(GreekKind::Gamma, options.bump)) {
+            return *triggered;
+        }
+        reject_barrier_numerical(state,
+                                 method,
+                                 "gamma",
+                                 "with practical path counts the central-difference noise "
+                                 "dominates the |Γ| signal and sign flips occur near zero",
+                                 PricingMethod::MonteCarlo,
+                                 std::nullopt);
         const double s0 = state.underlying.initial_value();
-        const double eps = options.bump.value_or(s0 / 100.0);
+        const double eps =
+            detail::resolve_barrier_spot_bump(state, options.bump.value_or(s0 / 100.0));
         const auto up = impl_->rebuild(state.underlying.with_initial_value(s0 + eps));
         const auto dn = impl_->rebuild(state.underlying.with_initial_value(s0 - eps));
         const double centre = present_value();
@@ -607,6 +707,10 @@ double OptionValuation::vega(GreekOptions options) const {
         if (method != GreekCalculationMethod::Numerical) {
             return impl_->engine->vega();
         }
+        if (const auto triggered =
+                impl_->barrier_inception_triggered_greek(GreekKind::Vega, options.bump)) {
+            return *triggered;
+        }
         const double vol = state.underlying.volatility();
         const double eps = options.bump.value_or(kDefaultVegaBump);
         const auto up = impl_->rebuild(state.underlying.with_volatility(vol + eps));
@@ -618,6 +722,16 @@ double OptionValuation::vega(GreekOptions options) const {
 double OptionValuation::theta(GreekOptions options) const {
     return impl_->memoize({GreekKind::Theta, options.method, options.bump}, [&] {
         const auto& state = impl_->state;
+        // BSM analytical barrier theta: prefer the Black-Scholes PDE identity
+        // over a forward time bump (better accuracy). Auto-select only; an
+        // explicit NUMERICAL request or a user bump opts back into
+        // bump-and-revalue, and inception-triggered barriers short-circuit
+        // below (the identity is only valid in the continuation region).
+        if (impl_->is_barrier() && state.pricing_method == PricingMethod::Bsm &&
+            !options.method.has_value() && !options.bump.has_value() &&
+            !detail::barrier_triggered_at_inception(state)) {
+            return impl_->engine->theta();
+        }
         const auto method = resolve_greek_method(state, options.method, true, true);
         validate_bump(options.bump, method, "time_bump_days");
         if (method == GreekCalculationMethod::Pathwise) {
@@ -629,6 +743,28 @@ double OptionValuation::theta(GreekOptions options) const {
         if (method != GreekCalculationMethod::Numerical) {
             return impl_->engine->theta();
         }
+        // Per-day theta of the AT_EXPIRY rebate cashflow R*df_r(T): the
+        // discount factor unwinds at rate r, so theta = r*pv/365.
+        const auto ko_theta_at_expiry = [&](const BarrierSpec& barrier) {
+            const double maturity = state.maturity_year_fraction();
+            const double df_r = state.discount_curve().df(maturity);
+            const double pv = barrier.rebate() * df_r;
+            const double rate = -std::log(df_r) / maturity;
+            return rate * pv / 365.0;
+        };
+        if (const auto triggered = impl_->barrier_inception_triggered_greek(
+                GreekKind::Theta, options.bump, ko_theta_at_expiry)) {
+            return *triggered;
+        }
+        reject_barrier_numerical(state,
+                                 method,
+                                 "theta",
+                                 "bump-and-revalue theta on discretely-monitored barriers is "
+                                 "unreliable: bumping the pricing date forces re-resolution of "
+                                 "the monitoring schedule (a different contract on the bumped "
+                                 "side)",
+                                 std::nullopt,
+                                 BarrierMonitoring::Discrete);
         const double days = options.bump.value_or(impl_->is_barrier() ? kBarrierThetaTimeBumpDays
                                                                       : kDefaultThetaTimeBumpDays);
         const DateTime bumped_date = add_days(state.pricing_date(), days);
@@ -654,6 +790,20 @@ double OptionValuation::rho(GreekOptions options) const {
         }
         if (method != GreekCalculationMethod::Numerical) {
             return impl_->engine->rho();
+        }
+        // Central-difference rho of the AT_EXPIRY rebate cashflow R*df_r(T)
+        // via a parallel zero-rate bump, scaled per 1% rate move.
+        const auto ko_rho_at_expiry = [&](const BarrierSpec& barrier) {
+            const double eps_r = options.bump.value_or(kDefaultRateBump);
+            const double maturity = state.maturity_year_fraction();
+            const auto& curve = state.discount_curve();
+            const double df_up = curve.bump_parallel_zero_rate(eps_r / 2.0).df(maturity);
+            const double df_dn = curve.bump_parallel_zero_rate(-eps_r / 2.0).df(maturity);
+            return barrier.rebate() * (df_up - df_dn) / eps_r * kPerCentScale;
+        };
+        if (const auto triggered = impl_->barrier_inception_triggered_greek(
+                GreekKind::Rho, options.bump, ko_rho_at_expiry)) {
+            return *triggered;
         }
         const double bump = options.bump.value_or(kDefaultRateBump);
         const auto& curve = state.discount_curve();

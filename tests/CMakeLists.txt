@@ -13,6 +13,7 @@ add_executable(
     test_params.cpp
     test_simulation_processes.cpp
     test_underlying.cpp
+    test_valuation_barrier.cpp
     test_valuation_binomial.cpp
     test_valuation_bsm.cpp
     test_valuation_facade.cpp

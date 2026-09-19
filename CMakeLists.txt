@@ -60,6 +60,7 @@ target_sources(
             src/dividends.cpp
             src/engines/binomial.cpp
             src/engines/bsm.cpp
+            src/engines/barrier_analytical.cpp
             src/engines/mc.cpp
             src/engines/pde.cpp
             src/enums.cpp
