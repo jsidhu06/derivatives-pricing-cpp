@@ -14,6 +14,7 @@
 
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <compare>
 #include <format>
 #include <functional>
@@ -343,6 +344,29 @@ void reject_barrier_numerical(const detail::ValuationState& state,
                     greek));
 }
 
+/// Barrier theta via the Black-Scholes PDE identity
+/// `theta = r V - (r - q) S delta - sigma^2 S^2 gamma / 2`, per calendar day,
+/// with flat-equivalent rates from the curves at maturity. V/delta/gamma
+/// route through the facade's own greeks, so they share the memoised solves
+/// and the barrier-clamped bumps, and any future engine-native barrier
+/// greeks flow in automatically. Only valid in the continuation region: the
+/// caller must have excluded inception-triggered barriers.
+double barrier_bsm_identity_theta(const OptionValuation& valuation,
+                                  const detail::ValuationState& state) {
+    const double maturity = state.maturity_year_fraction();
+    const double df_r = state.discount_curve().df(maturity);
+    const double rate = -std::log(df_r) / maturity;
+    const auto& dividend_curve = state.underlying.dividend_curve();
+    const double df_q = dividend_curve.has_value() ? dividend_curve->df(maturity) : 1.0;
+    const double yield = -std::log(df_q) / maturity;
+    const double spot = state.underlying.initial_value();
+    const double sigma = state.underlying.volatility();
+    const double theta_annual = rate * valuation.present_value() -
+                                (rate - yield) * spot * valuation.delta() -
+                                0.5 * sigma * sigma * spot * spot * valuation.gamma();
+    return theta_annual / 365.0;  // per calendar day
+}
+
 /// True when the method-specific params carry `control_variate_european`.
 bool control_variate_requested(const std::optional<ValuationParams>& params) {
     if (!params.has_value()) {
@@ -403,13 +427,8 @@ struct OptionValuation::Impl {
 
     /// The vanilla valuation an inception-triggered knock-in collapses to.
     [[nodiscard]] OptionValuation vanilla_equivalent() const {
-        const auto& barrier = std::get<BarrierSpec>(state.spec);
-        const VanillaSpec vanilla({.option_type = barrier.option_type(),
-                                   .exercise_type = barrier.exercise_type(),
-                                   .strike = barrier.strike(),
-                                   .maturity = barrier.maturity(),
-                                   .currency = barrier.currency(),
-                                   .contract_size = barrier.contract_size()});
+        const VanillaSpec vanilla =
+            detail::vanilla_equivalent_spec(std::get<BarrierSpec>(state.spec));
         return state.underlying.visit([&](const auto& u) {
             return OptionValuation(u, vanilla, state.pricing_method, state.params);
         });
@@ -722,15 +741,14 @@ double OptionValuation::vega(GreekOptions options) const {
 double OptionValuation::theta(GreekOptions options) const {
     return impl_->memoize({GreekKind::Theta, options.method, options.bump}, [&] {
         const auto& state = impl_->state;
-        // BSM analytical barrier theta: prefer the Black-Scholes PDE identity
-        // over a forward time bump (better accuracy). Auto-select only; an
-        // explicit NUMERICAL request or a user bump opts back into
-        // bump-and-revalue, and inception-triggered barriers short-circuit
-        // below (the identity is only valid in the continuation region).
+        // BSM analytical barrier theta: prefer the PDE identity over a
+        // forward time bump (better accuracy). Auto-select only; an explicit
+        // NUMERICAL request or a user bump opts back into bump-and-revalue,
+        // and inception-triggered barriers short-circuit below.
         if (impl_->is_barrier() && state.pricing_method == PricingMethod::Bsm &&
             !options.method.has_value() && !options.bump.has_value() &&
             !detail::barrier_triggered_at_inception(state)) {
-            return impl_->engine->theta();
+            return barrier_bsm_identity_theta(*this, state);
         }
         const auto method = resolve_greek_method(state, options.method, true, true);
         validate_bump(options.bump, method, "time_bump_days");

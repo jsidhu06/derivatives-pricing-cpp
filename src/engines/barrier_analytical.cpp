@@ -19,7 +19,6 @@ using math::normal_cdf;
 
 /// Broadie-Glasserman-Kou constant for the discrete-monitoring correction.
 constexpr double kBgBeta = 0.5826;
-constexpr double kDaysPerYear = 365.0;
 
 /// Continuity correction for a barrier observed at m equally spaced dates:
 /// `H_adj = H * exp(±beta * sigma * sqrt(T/m))`, shifted away from the spot
@@ -382,12 +381,7 @@ double AnalyticalBarrierEngine::triggered_at_inception_value(double df_r) const 
     }
 
     // Knock-in already activated: price the vanilla equivalent via BSM.
-    const VanillaSpec vanilla({.option_type = spec.option_type(),
-                               .exercise_type = spec.exercise_type(),
-                               .strike = spec.strike(),
-                               .maturity = spec.maturity(),
-                               .currency = spec.currency(),
-                               .contract_size = spec.contract_size()});
+    const VanillaSpec vanilla = detail::vanilla_equivalent_spec(spec);
     const detail::ValuationState vanilla_state{.underlying = state_.underlying,
                                                .spec = OptionSpec{vanilla},
                                                .pricing_method = PricingMethod::Bsm,
@@ -403,25 +397,6 @@ double AnalyticalBarrierEngine::present_value() const {
         return triggered_at_inception_value(in.df_r);
     }
     return price_at_spot(in, state_.underlying.initial_value());
-}
-
-double AnalyticalBarrierEngine::theta() const {
-    const Inputs in = inputs();
-    const double spot = state_.underlying.initial_value();
-
-    // Delta and gamma from barrier-clamped central differences of the same
-    // closed form the facade's NUMERICAL greeks use, so the identity is
-    // internally consistent with the reported greeks.
-    const double eps = detail::resolve_barrier_spot_bump(state_, spot / 100.0);
-    const double value = price_at_spot(in, spot);
-    const double up = price_at_spot(in, spot + eps);
-    const double down = price_at_spot(in, spot - eps);
-    const double delta = (up - down) / (2.0 * eps);
-    const double gamma = (up - 2.0 * value + down) / (eps * eps);
-
-    const double theta_annual = in.rate * value - (in.rate - in.yield) * spot * delta -
-                                0.5 * in.sigma * in.sigma * spot * spot * gamma;
-    return theta_annual / kDaysPerYear;
 }
 
 }  // namespace dp::engines

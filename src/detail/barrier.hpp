@@ -16,6 +16,16 @@
 /// Internal barrier helpers shared by the facade and the barrier engines.
 namespace dp::detail {
 
+/// The vanilla contract an inception-triggered knock-in collapses to.
+inline VanillaSpec vanilla_equivalent_spec(const BarrierSpec& barrier) {
+    return VanillaSpec({.option_type = barrier.option_type(),
+                        .exercise_type = barrier.exercise_type(),
+                        .strike = barrier.strike(),
+                        .maturity = barrier.maturity(),
+                        .currency = barrier.currency(),
+                        .contract_size = barrier.contract_size()});
+}
+
 /// Monitoring dates for a DISCRETE barrier; nullopt for CONTINUOUS.
 inline std::optional<std::vector<DateTime>> barrier_monitoring_dates(const ValuationState& state) {
     const auto& spec = std::get<BarrierSpec>(state.spec);

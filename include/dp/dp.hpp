@@ -13,6 +13,7 @@
 #include "dp/market_data.hpp"
 #include "dp/math/normal.hpp"
 #include "dp/params.hpp"
+#include "dp/simulation.hpp"
 #include "dp/underlying.hpp"
 #include "dp/valuation.hpp"
 #include "dp/version.hpp"

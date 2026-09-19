@@ -22,12 +22,9 @@ public:
     [[nodiscard]] std::string_view name() const noexcept override { return "AnalyticalBarrier"; }
     [[nodiscard]] double present_value() const override;
 
-    /// Barrier theta via the Black-Scholes PDE identity
-    /// `theta = r V - (r - q) S delta - sigma^2 S^2 gamma / 2` (per calendar
-    /// day), with delta/gamma from barrier-clamped central differences of the
-    /// closed form. The identity holds in the continuation region only; the
-    /// facade short-circuits inception-triggered barriers before calling it.
-    [[nodiscard]] double theta() const override;
+    // No native greeks: the facade computes barrier theta via the
+    // Black-Scholes PDE identity from its own (cached, barrier-clamped)
+    // present_value/delta/gamma, and the other greeks bump-and-revalue.
 
 private:
     /// Flat-equivalent market inputs at maturity, shared by PV and theta.
