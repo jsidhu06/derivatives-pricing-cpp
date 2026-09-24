@@ -141,6 +141,9 @@ std::unique_ptr<engines::PricingEngine> build_engine(const detail::ValuationStat
             }
             return std::make_unique<engines::AnalyticalBarrierEngine>(state);
         }
+        if (method == PricingMethod::Binomial) {
+            return std::make_unique<engines::BinomialEngine>(state);
+        }
         throw UnsupportedFeatureError(std::format(
             "Barrier options with {} exercise do not yet support {} pricing in this port.",
             name(exercise),
@@ -217,15 +220,47 @@ GreekCalculationMethod auto_select_greek_method(const detail::ValuationState& st
     return GreekCalculationMethod::Numerical;
 }
 
+/// Block NUMERICAL bump-and-revalue greeks on binomial barrier specs: the
+/// Boyle-Lau step count depends on spot, volatility, and time-to-maturity,
+/// so bumping any of them re-resolves alignment and the central difference
+/// compares trees of different topology. Rho is exempt (rates do not enter
+/// the alignment formula); inception-triggered barriers collapse to a
+/// deterministic state and are exempt too.
+void reject_barrier_binomial_numerical(const detail::ValuationState& state,
+                                       GreekCalculationMethod method,
+                                       bool allow) {
+    if (allow || method != GreekCalculationMethod::Numerical) {
+        return;
+    }
+    if (!std::holds_alternative<BarrierSpec>(state.spec) ||
+        state.pricing_method != PricingMethod::Binomial) {
+        return;
+    }
+    if (detail::barrier_triggered_at_inception(state)) {
+        return;
+    }
+    throw UnsupportedFeatureError(
+        "Binomial NUMERICAL bump-and-revalue greeks are not supported for barrier options "
+        "(rho is exempt). Bumping spot, volatility or time causes Boyle-Lau barrier "
+        "alignment to pick a different tree step count for each bumped valuation, so the "
+        "central difference compares two different tree topologies. Use "
+        "GreekCalculationMethod.TREE for delta/gamma/theta, or switch to "
+        "PricingMethod.PDE_FD for vega and for NUMERICAL bump-and-revalue on the full "
+        "grid.");
+}
+
 /// Resolve and validate the Greek method. `nullopt` auto-selects the best
 /// engine-native method; an explicit choice is checked against the engine and
 /// the per-Greek capability flags.
 GreekCalculationMethod resolve_greek_method(const detail::ValuationState& state,
                                             std::optional<GreekCalculationMethod> requested,
                                             bool tree_capable = false,
-                                            bool grid_capable = false) {
+                                            bool grid_capable = false,
+                                            bool allow_barrier_binomial_numerical = false) {
     if (!requested.has_value()) {
-        return auto_select_greek_method(state, tree_capable, grid_capable);
+        const auto resolved = auto_select_greek_method(state, tree_capable, grid_capable);
+        reject_barrier_binomial_numerical(state, resolved, allow_barrier_binomial_numerical);
+        return resolved;
     }
     const auto method = *requested;
 
@@ -276,6 +311,7 @@ GreekCalculationMethod resolve_greek_method(const detail::ValuationState& state,
                             name(method)));
         }
     }
+    reject_barrier_binomial_numerical(state, method, allow_barrier_binomial_numerical);
     return method;
 }
 
@@ -798,7 +834,14 @@ double OptionValuation::theta(GreekOptions options) const {
 double OptionValuation::rho(GreekOptions options) const {
     return impl_->memoize({GreekKind::Rho, options.method, options.bump}, [&] {
         const auto& state = impl_->state;
-        const auto method = resolve_greek_method(state, options.method);
+        // Rho is exempt from the barrier-binomial NUMERICAL guard: rate bumps
+        // do not change the Boyle-Lau step count, so both trees share one
+        // topology and the central difference is valid.
+        const auto method = resolve_greek_method(state,
+                                                 options.method,
+                                                 /*tree_capable=*/false,
+                                                 /*grid_capable=*/false,
+                                                 /*allow_barrier_binomial_numerical=*/true);
         validate_bump(options.bump, method, "rate_bump");
         if (method == GreekCalculationMethod::Pathwise) {
             return impl_->engine->rho_pathwise();
