@@ -144,6 +144,9 @@ std::unique_ptr<engines::PricingEngine> build_engine(const detail::ValuationStat
         if (method == PricingMethod::Binomial) {
             return std::make_unique<engines::BinomialEngine>(state);
         }
+        if (method == PricingMethod::PdeFd) {
+            return std::make_unique<engines::PdeEngine>(state);
+        }
         throw UnsupportedFeatureError(std::format(
             "Barrier options with {} exercise do not yet support {} pricing in this port.",
             name(exercise),

@@ -287,12 +287,9 @@ TEST_CASE("analytical barrier rejections", "[barrier]") {
                              message_contains("BSM is only applicable to European"));
     }
 
-    SECTION("remaining numerical engines are still pending") {
+    SECTION("the Monte Carlo barrier engine is still pending") {
         const auto spec =
             barrier_spec(base_params(120.0, BarrierDirection::Up, BarrierAction::Out));
-        CHECK_THROWS_MATCHES(OptionValuation(ud(), spec, PricingMethod::PdeFd),
-                             UnsupportedFeatureError,
-                             message_contains("do not yet support"));
         const GbmProcess process(md(),
                                  {.initial_value = 100.0, .volatility = 0.25},
                                  {.paths = 1000, .end_date = kMaturity, .num_steps = 12});

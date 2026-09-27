@@ -26,7 +26,7 @@ are in place:
 | BSM engine | (internal) | closed-form European vanilla PV + analytical Greeks |
 | Barrier engine | (internal) | Reiner-Rubinstein closed forms for all 8 knock-in/out barrier types; Broadie-Glasserman-Kou discrete-monitoring correction; at-hit / at-expiry rebates; PDE-identity theta; barrier-clamped numerical greeks; inception-trigger handling |
 | Binomial engine | (internal) | CRR trees: vanilla + custom payoffs, European/American, escrowed discrete dividends, tree Greeks, arbitrage guard, European control variate; barriers via Boyle-Lau aligned trees (continuous) and half-step placement (discrete), knock-in two-state recursion, rebates, near-barrier greek guards |
-| PDE engine | (internal) | implicit / explicit / explicit-Hull / Rannacher-CN on spot or log-spot grids; PSOR or intrinsic American; dividend jump conditions; affine boundary models; CFL guard; grid Greeks |
+| PDE engine | (internal) | implicit / explicit / explicit-Hull / Rannacher-CN on spot or log-spot grids; PSOR or intrinsic American; dividend jump conditions; affine boundary models; CFL guard; grid Greeks; barriers via grid truncation (continuous KO), monitoring-date resets (discrete), two-surface coupled American knock-ins, and European KI parity |
 | Simulation | `dp/simulation.hpp` | `GbmProcess` / `JdProcess` (Merton) / `SrdProcess` (CIR, full-truncation Euler) + `SimulationConfig`: PCG64 + inverse-CDF normals, antithetic + moment matching, observation-date grids, discrete dividends; `CorrelationContext` for Cholesky-correlated multi-asset draws |
 | MC engine | (internal) | European (discounted terminal payoff) and American (ridge-regularised Laguerre Longstaff-Schwartz); pathwise + likelihood-ratio Greeks; CRN by default; std-error monitor |
 
