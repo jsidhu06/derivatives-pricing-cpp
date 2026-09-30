@@ -239,7 +239,7 @@ std::vector<Eigen::MatrixXd> CorrelationContext::standard_normals(
         Eigen::MatrixXd draws(paths, steps);
         for (Index t = 0; t < steps; ++t) {
             for (Index p = 0; p < paths; ++p) {
-                draws(p, t) = math::normal_quantile(open_uniform(rng));
+                draws(p, t) = math::normal_quantile_fast(open_uniform(rng));
             }
         }
         result.push_back(std::move(draws));
@@ -401,7 +401,7 @@ Eigen::MatrixXd PathProcess::draw_normals(std::optional<std::uint64_t> seed, Ind
         const Index half = paths / 2;
         for (Index t = 0; t < steps; ++t) {
             for (Index p = 0; p < half; ++p) {
-                const double z = math::normal_quantile(open_uniform(rng));
+                const double z = math::normal_quantile_fast(open_uniform(rng));
                 normals(p, t) = z;
                 normals(half + p, t) = -z;
             }
@@ -409,7 +409,7 @@ Eigen::MatrixXd PathProcess::draw_normals(std::optional<std::uint64_t> seed, Ind
     } else {
         for (Index t = 0; t < steps; ++t) {
             for (Index p = 0; p < paths; ++p) {
-                normals(p, t) = math::normal_quantile(open_uniform(rng));
+                normals(p, t) = math::normal_quantile_fast(open_uniform(rng));
             }
         }
     }
@@ -573,7 +573,7 @@ SimulationResult JdProcess::simulate(std::optional<std::uint64_t> seed) const {
             for (Index p = 0; p < paths; ++p) {
                 const int jumps = poisson_knuth(jump_rng, jump_mean);
                 if (jumps > 0) {
-                    const double z_jump = math::normal_quantile(open_uniform(jump_rng));
+                    const double z_jump = math::normal_quantile_fast(open_uniform(jump_rng));
                     paths_matrix(p, t + 1) *=
                         std::exp(jumps * mu_jump + std::sqrt(jumps) * delta_jump * z_jump);
                 }

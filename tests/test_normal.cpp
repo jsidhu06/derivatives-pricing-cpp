@@ -5,6 +5,7 @@
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 
@@ -13,6 +14,7 @@ using Catch::Matchers::WithinRel;
 using dp::math::normal_cdf;
 using dp::math::normal_pdf;
 using dp::math::normal_quantile;
+using dp::math::normal_quantile_fast;
 
 TEST_CASE("normal_cdf reference values", "[math][normal]") {
     CHECK_THAT(normal_cdf(0.0), WithinAbs(0.5, 1e-16));
@@ -67,4 +69,28 @@ TEST_CASE("normal_quantile reference values and boundaries", "[math][normal]") {
     CHECK_THROWS_AS(normal_quantile(-0.1), dp::ValidationError);
     CHECK_THROWS_AS(normal_quantile(1.1), dp::ValidationError);
     CHECK_THROWS_AS(normal_quantile(std::numeric_limits<double>::quiet_NaN()), dp::ValidationError);
+}
+
+TEST_CASE("AS241 normal_quantile_fast matches Boost across the unit interval", "[math][normal]") {
+    // Dense sweep of the central region and both tail branches (r <= 5 and
+    // r > 5, i.e. p below ~1.4e-11), down to the smallest open-interval
+    // uniform the simulation can produce (2^-54).
+    double max_rel = 0.0;
+    for (int i = 1; i < 20'000; ++i) {
+        const double p = i / 20'000.0;
+        const double exact = normal_quantile(p);
+        max_rel = std::max(
+            max_rel, std::abs(normal_quantile_fast(p) - exact) / std::max(std::abs(exact), 1e-300));
+    }
+    for (int e = 2; e <= 54; ++e) {
+        for (const double p :
+             {std::ldexp(1.0, -e), 1.0 - std::ldexp(1.0, -e), 3.0 * std::ldexp(1.0, -e - 2)}) {
+            const double exact = normal_quantile(p);
+            max_rel =
+                std::max(max_rel, std::abs(normal_quantile_fast(p) - exact) / std::abs(exact));
+        }
+    }
+    CHECK(max_rel < 1e-14);
+    CHECK(normal_quantile_fast(0.5) == 0.0);
+    CHECK(normal_quantile_fast(0.25) == -normal_quantile_fast(0.75));
 }

@@ -151,7 +151,7 @@ private:
 /// protected and non-virtual.
 ///
 /// RNG: PCG64 seeded from `MonteCarloParams.random_seed`, normals via the
-/// inverse CDF (one uniform per normal, so stream positions are predictable
+/// AS241 inverse CDF (one uniform per normal, so stream positions are predictable
 /// and the layout is QMC-ready). Streams are portable across platforms but
 /// intentionally not numpy-compatible.
 class PathProcess {

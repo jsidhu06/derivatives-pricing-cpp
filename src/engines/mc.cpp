@@ -15,6 +15,7 @@
 #include <cmath>
 #include <random>
 #include <set>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -220,33 +221,35 @@ double open_uniform(pcg64& rng) {
     return (static_cast<double>(rng() >> 11) + 0.5) * kScale;
 }
 
-/// Conditional probability that a log-normal path crosses the barrier
-/// between two observed endpoints (Brownian-bridge reflection result).
-/// At sigma == 0 the deterministic path is monotone, so only endpoint
-/// crossings (caught by the mask) can occur.
-ArrayXd brownian_bridge_hit_prob(const ArrayXd& spot_start,
-                                 const ArrayXd& spot_end,
-                                 double barrier,
-                                 double sigma,
-                                 double dt_step,
-                                 bool is_up) {
-    ArrayXd p = ArrayXd::Zero(spot_start.size());
-    const bool sigma_positive = sigma > 0.0;
-    const double denom = sigma * sigma * dt_step;
-    for (Index i = 0; i < spot_start.size(); ++i) {
-        const bool crossed = is_up ? (spot_start[i] >= barrier || spot_end[i] >= barrier)
-                                   : (spot_start[i] <= barrier || spot_end[i] <= barrier);
-        if (crossed) {
-            p[i] = 1.0;
-        } else if (sigma_positive) {
-            const double log_a =
-                is_up ? std::log(barrier / spot_start[i]) : std::log(spot_start[i] / barrier);
-            const double log_b =
-                is_up ? std::log(barrier / spot_end[i]) : std::log(spot_end[i] / barrier);
-            p[i] = std::clamp(std::exp(-2.0 * log_a * log_b / denom), 0.0, 1.0);
-        }
+/// Signed log-distance to the barrier, positive on the alive side:
+/// ln(H/S) for an up barrier, ln(S/H) for a down barrier. Zero or negative
+/// means the node is at or through the barrier.
+ArrayXd signed_barrier_distance(const Eigen::Ref<const ArrayXd>& spots,
+                                double barrier,
+                                bool is_up) {
+    ArrayXd distance = (barrier / spots).log();
+    if (!is_up) {
+        distance = -distance;
     }
-    return p;
+    return distance;
+}
+
+/// Conditional probability that a log-normal path crosses the barrier
+/// between two observed endpoints (Brownian-bridge reflection result),
+/// from the endpoints' signed log-distances. Takes distances rather than
+/// spots so callers compute each node's log once and carry it to the next
+/// step. At sigma == 0 the deterministic path is monotone, so only
+/// endpoint crossings can occur.
+ArrayXd brownian_bridge_hit_prob(const ArrayXd& distance_start,
+                                 const ArrayXd& distance_end,
+                                 double sigma,
+                                 double dt_step) {
+    const BoolArray crossed = (distance_start <= 0.0) || (distance_end <= 0.0);
+    if (!(sigma > 0.0)) {
+        return crossed.cast<double>();
+    }
+    const double scale = -2.0 / (sigma * sigma * dt_step);
+    return crossed.select(1.0, (scale * distance_start * distance_end).exp());
 }
 
 /// Positive log-distance from the absorbing barrier (0 on the dead side).
@@ -533,12 +536,14 @@ McEngine::BarrierWeights McEngine::continuous_weights(const SimulationResult& si
     const DayCountConvention dcc = state_.day_count_convention();
 
     ArrayXd survival = ArrayXd::Ones(n_paths);
+    ArrayXd distance_prev = signed_barrier_distance(sim.paths.col(0).array(), barrier, is_up);
     for (Index t = 1; t <= end; ++t) {
         const double dt_step = year_fraction(sim.dates[static_cast<std::size_t>(t) - 1],
                                              sim.dates[static_cast<std::size_t>(t)],
                                              dcc);
-        const ArrayXd p_hit = brownian_bridge_hit_prob(
-            sim.paths.col(t - 1).array(), sim.paths.col(t).array(), barrier, sigma, dt_step, is_up);
+        ArrayXd distance = signed_barrier_distance(sim.paths.col(t).array(), barrier, is_up);
+        const ArrayXd p_hit = brownian_bridge_hit_prob(distance_prev, distance, sigma, dt_step);
+        distance_prev = std::move(distance);
         if (rebate > 0.0 && is_out && rebate_at_hit) {
             // The intra-step hit time is unknown: discount to the interval
             // midpoint.
@@ -684,6 +689,13 @@ McEngine::BarrierPathState McEngine::american_barrier_state(const SimulationResu
     const double sigma = state_.underlying.volatility();
     const DayCountConvention dcc = state_.day_count_convention();
 
+    // Continuous monitoring carries each node's log-distance to the next
+    // step so every node's log is taken once.
+    ArrayXd distance_prev;
+    if (continuous) {
+        distance_prev = signed_barrier_distance(sim.paths.col(start).array(), barrier, is_up);
+    }
+
     for (Index t = 1; t < n_times; ++t) {
         path_state.ever_hit.push_back(path_state.ever_hit.back());
         if (!continuous && !monitoring_set.contains(start + t)) {
@@ -696,8 +708,9 @@ McEngine::BarrierPathState McEngine::american_barrier_state(const SimulationResu
             const double dt_step = year_fraction(sim.dates[static_cast<std::size_t>(start + t) - 1],
                                                  sim.dates[static_cast<std::size_t>(start + t)],
                                                  dcc);
-            const ArrayXd p_hit = brownian_bridge_hit_prob(
-                sim.paths.col(start + t - 1).array(), spots_curr, barrier, sigma, dt_step, is_up);
+            ArrayXd distance = signed_barrier_distance(spots_curr, barrier, is_up);
+            const ArrayXd p_hit = brownian_bridge_hit_prob(distance_prev, distance, sigma, dt_step);
+            distance_prev = std::move(distance);
             for (Index p = 0; p < n_paths; ++p) {
                 step_hit[p] = open_uniform(bridge_rng) < p_hit[p];
             }
