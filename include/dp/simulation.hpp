@@ -248,6 +248,9 @@ public:
     [[nodiscard]] GbmProcess with_market_data(MarketData market_data) const;
     [[nodiscard]] GbmProcess with_pricing_date(DateTime pricing_date) const;
     [[nodiscard]] GbmProcess with_discount_curve(DiscountCurve discount_curve) const;
+    /// Copy with extra dates merged into the simulation grid (fixings,
+    /// barrier monitoring dates...).
+    [[nodiscard]] GbmProcess with_observation_dates(std::vector<DateTime> dates) const;
 
 private:
     GbmParams params_;
@@ -289,6 +292,9 @@ public:
     [[nodiscard]] JdProcess with_market_data(MarketData market_data) const;
     [[nodiscard]] JdProcess with_pricing_date(DateTime pricing_date) const;
     [[nodiscard]] JdProcess with_discount_curve(DiscountCurve discount_curve) const;
+    /// Copy with extra dates merged into the simulation grid (fixings,
+    /// barrier monitoring dates...).
+    [[nodiscard]] JdProcess with_observation_dates(std::vector<DateTime> dates) const;
 
 private:
     JdParams params_;
@@ -322,6 +328,9 @@ public:
     [[nodiscard]] SrdProcess with_market_data(MarketData market_data) const;
     [[nodiscard]] SrdProcess with_pricing_date(DateTime pricing_date) const;
     [[nodiscard]] SrdProcess with_discount_curve(DiscountCurve discount_curve) const;
+    /// Copy with extra dates merged into the simulation grid (fixings,
+    /// barrier monitoring dates...).
+    [[nodiscard]] SrdProcess with_observation_dates(std::vector<DateTime> dates) const;
 
 private:
     SrdParams params_;

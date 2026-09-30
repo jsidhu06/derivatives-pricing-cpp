@@ -141,16 +141,8 @@ std::unique_ptr<engines::PricingEngine> build_engine(const detail::ValuationStat
             }
             return std::make_unique<engines::AnalyticalBarrierEngine>(state);
         }
-        if (method == PricingMethod::Binomial) {
-            return std::make_unique<engines::BinomialEngine>(state);
-        }
-        if (method == PricingMethod::PdeFd) {
-            return std::make_unique<engines::PdeEngine>(state);
-        }
-        throw UnsupportedFeatureError(std::format(
-            "Barrier options with {} exercise do not yet support {} pricing in this port.",
-            name(exercise),
-            name(method)));
+        // Binomial, PDE and Monte Carlo barriers dispatch through the
+        // standard engine switch below.
     }
 
     switch (method) {
@@ -535,8 +527,7 @@ struct OptionValuation::Impl {
             throw UnsupportedFeatureError(
                 "control_variate_european is not supported for PayoffSpec.");
         }
-        const auto* vanilla = std::get_if<VanillaSpec>(&state.spec);
-        if (vanilla == nullptr || !state.option_type.has_value()) {
+        if (!state.option_type.has_value()) {
             throw UnsupportedFeatureError(
                 "control_variate_european requires a CALL or PUT option type.");
         }
@@ -544,14 +535,36 @@ struct OptionValuation::Impl {
         if (!state.params.has_value()) {
             throw ConfigurationError("control_variate_european requires method params");
         }
-        const VanillaSpec euro_spec({
-            .option_type = vanilla->option_type(),
-            .exercise_type = ExerciseType::European,
-            .strike = vanilla->strike(),
-            .maturity = vanilla->maturity(),
-            .currency = vanilla->currency(),
-            .contract_size = vanilla->contract_size(),
-        });
+        // The European leg keeps the contract shape (a barrier CV uses
+        // European barrier legs, mirroring the Python dataclasses.replace).
+        std::optional<OptionSpec> euro;
+        if (const auto* vanilla = std::get_if<VanillaSpec>(&state.spec)) {
+            euro = VanillaSpec({
+                .option_type = vanilla->option_type(),
+                .exercise_type = ExerciseType::European,
+                .strike = vanilla->strike(),
+                .maturity = vanilla->maturity(),
+                .currency = vanilla->currency(),
+                .contract_size = vanilla->contract_size(),
+            });
+        } else {
+            const auto& barrier = std::get<BarrierSpec>(state.spec);
+            euro = BarrierSpec({.option_type = barrier.option_type(),
+                                .exercise_type = ExerciseType::European,
+                                .strike = barrier.strike(),
+                                .maturity = barrier.maturity(),
+                                .barrier = barrier.barrier(),
+                                .direction = barrier.direction(),
+                                .action = barrier.action(),
+                                .monitoring = barrier.monitoring(),
+                                .rebate = barrier.rebate(),
+                                .rebate_timing = barrier.rebate_timing(),
+                                .currency = barrier.currency(),
+                                .contract_size = barrier.contract_size(),
+                                .num_observations = barrier.num_observations(),
+                                .monitoring_dates = barrier.monitoring_dates()});
+        }
+        const OptionSpec& euro_spec = *euro;
 
         const double euro_numerical =
             state.underlying
@@ -663,6 +676,12 @@ void OptionValuation::init(detail::Underlying underlying,
         if (dates.has_value() && dates->front() < impl_->state.pricing_date()) {
             throw ValidationError(
                 "Barrier monitoring schedule must not start before pricing_date.");
+        }
+        // Monte Carlo needs every discrete monitoring date on the simulation
+        // grid: inject the schedule into the process's observation dates
+        // (mirrors the Python facade's sim_config injection).
+        if (pricing_method == PricingMethod::MonteCarlo && dates.has_value()) {
+            impl_->state.underlying = impl_->state.underlying.with_observation_dates(*dates);
         }
     }
 

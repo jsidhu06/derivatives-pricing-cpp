@@ -494,6 +494,13 @@ GbmProcess GbmProcess::with_market_data(MarketData market_data) const {
     return {std::move(market_data), params_, config(), correlation_context(), name()};
 }
 
+GbmProcess GbmProcess::with_observation_dates(std::vector<DateTime> dates) const {
+    SimulationConfig new_config = config();
+    new_config.observation_dates.insert(
+        new_config.observation_dates.end(), dates.begin(), dates.end());
+    return {market_data(), params_, std::move(new_config), correlation_context(), name()};
+}
+
 GbmProcess GbmProcess::with_pricing_date(DateTime pricing_date) const {
     return with_market_data(market_data().with_pricing_date(pricing_date));
 }
@@ -597,6 +604,13 @@ JdProcess JdProcess::with_market_data(MarketData market_data) const {
     return {std::move(market_data), params_, config(), correlation_context(), name()};
 }
 
+JdProcess JdProcess::with_observation_dates(std::vector<DateTime> dates) const {
+    SimulationConfig new_config = config();
+    new_config.observation_dates.insert(
+        new_config.observation_dates.end(), dates.begin(), dates.end());
+    return {market_data(), params_, std::move(new_config), correlation_context(), name()};
+}
+
 JdProcess JdProcess::with_pricing_date(DateTime pricing_date) const {
     return with_market_data(market_data().with_pricing_date(pricing_date));
 }
@@ -692,6 +706,13 @@ SrdProcess SrdProcess::with_volatility(double volatility) const {
 
 SrdProcess SrdProcess::with_market_data(MarketData market_data) const {
     return {std::move(market_data), params_, config(), correlation_context(), name()};
+}
+
+SrdProcess SrdProcess::with_observation_dates(std::vector<DateTime> dates) const {
+    SimulationConfig new_config = config();
+    new_config.observation_dates.insert(
+        new_config.observation_dates.end(), dates.begin(), dates.end());
+    return {market_data(), params_, std::move(new_config), correlation_context(), name()};
 }
 
 SrdProcess SrdProcess::with_pricing_date(DateTime pricing_date) const {

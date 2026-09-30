@@ -15,6 +15,7 @@
 #include <string>
 #include <utility>
 #include <variant>
+#include <vector>
 
 /// Internal: the validated inputs of an `OptionValuation`, shared with the
 /// engine it owns. Lives on the heap inside `OptionValuation::Impl`, so
@@ -119,6 +120,17 @@ public:
     [[nodiscard]] Underlying with_discount_curve(DiscountCurve curve) const {
         return visit(
             [&](const auto& u) { return Underlying(u.with_discount_curve(std::move(curve))); });
+    }
+    /// Merge extra dates into a path process's simulation grid; no-op for
+    /// `UnderlyingData` (deterministic engines have no grid).
+    [[nodiscard]] Underlying with_observation_dates(std::vector<DateTime> dates) const {
+        return visit([&](const auto& u) -> Underlying {
+            if constexpr (requires { u.with_observation_dates(std::move(dates)); }) {
+                return Underlying(u.with_observation_dates(std::move(dates)));
+            } else {
+                return Underlying(u);
+            }
+        });
     }
 
     /// Deterministic-engine view (for the BSM control-variate leg). Lossless

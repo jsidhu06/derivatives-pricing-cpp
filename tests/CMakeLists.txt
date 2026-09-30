@@ -15,6 +15,7 @@ add_executable(
     test_underlying.cpp
     test_valuation_barrier.cpp
     test_valuation_barrier_binomial.cpp
+    test_valuation_barrier_mc.cpp
     test_valuation_barrier_pde.cpp
     test_valuation_binomial.cpp
     test_valuation_bsm.cpp
