@@ -675,7 +675,7 @@ McEngine::BarrierPathState McEngine::american_barrier_state(const SimulationResu
     BarrierPathState path_state{
         .ever_hit = {}, .first_hit_step = IndexArray::Constant(n_paths, inception_hit ? 0 : -1)};
     path_state.ever_hit.reserve(static_cast<std::size_t>(n_times));
-    path_state.ever_hit.push_back(BoolArray::Constant(n_paths, inception_hit));
+    path_state.ever_hit.emplace_back(BoolArray::Constant(n_paths, inception_hit));
 
     std::set<Index> monitoring_set;
     for (const Index idx : barrier_monitoring_indices(sim, start + n_times - 1)) {
