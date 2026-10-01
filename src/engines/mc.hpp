@@ -19,17 +19,15 @@ using IndexArray = Eigen::Array<Eigen::Index, Eigen::Dynamic, 1>;
 /// Longstaff-Schwartz regression on a ridge-regularised Laguerre basis.
 /// Pathwise and likelihood-ratio Greeks for European vanillas.
 ///
-/// Barriers: discrete monitoring by pathwise checks at monitoring dates
-/// (any process); continuous monitoring GBM-only via Brownian-bridge
-/// crossing probabilities (survival weighting for Europeans, Bernoulli
-/// bridge sampling inside the American LSM). American knock-outs can use a
-/// barrier-aware LSM basis (`MonteCarloParams.barrier_aware_basis`).
+/// Extension: subclasses replace the per-path valuation through
+/// `present_value_pathwise()`; `present_value()` averages it and runs the
+/// standard-error monitor (`McBarrierEngine`).
 ///
 /// Caching: one simulation per engine instance (seeded from
 /// `MonteCarloParams.random_seed`), reused by PV and every estimator — this
 /// is what makes bump-and-revalue Greeks common-random-number by default.
 /// All entry points run under the facade's per-instance lock.
-class McEngine final : public PricingEngine {
+class McEngine : public PricingEngine {
 public:
     explicit McEngine(const detail::ValuationState& state);
 
@@ -46,6 +44,18 @@ public:
     [[nodiscard]] double rho_lr() const override;
     [[nodiscard]] double gamma_pathwise_fd(std::optional<double> epsilon) const override;
 
+protected:
+    /// Per-path discounted values hook: the vanilla/custom-payoff European
+    /// and LSM American estimators here; subclasses replace it.
+    [[nodiscard]] virtual Eigen::ArrayXd present_value_pathwise() const;
+    /// Label for the high-standard-error warning.
+    [[nodiscard]] virtual std::string_view std_error_label() const;
+
+    [[nodiscard]] const SimulationResult& simulation() const;
+    [[nodiscard]] Eigen::ArrayXd payoff_at(const Eigen::ArrayXd& spots) const;
+
+    const detail::ValuationState& state_;
+
 private:
     struct Terminal {
         Eigen::ArrayXd spot;  ///< S_T per path.
@@ -54,15 +64,32 @@ private:
         double df;
     };
 
-    [[nodiscard]] const SimulationResult& simulation() const;
     [[nodiscard]] Terminal terminal() const;
     /// Effective terminal N(0,1): sum(sqrt(dt_i) Z_i) / sqrt(T).
     [[nodiscard]] Eigen::ArrayXd effective_terminal_z(Eigen::Index maturity_index,
                                                       double ttm) const;
-    [[nodiscard]] Eigen::ArrayXd payoff_at(const Eigen::ArrayXd& spots) const;
-    [[nodiscard]] Eigen::ArrayXd present_value_pathwise() const;
+    [[nodiscard]] std::pair<double, double> risk_free_and_div_rates(double ttm) const;
 
-    // ── Barrier machinery ───────────────────────────────────────────
+    mutable std::optional<SimulationResult> simulation_;
+};
+
+/// Barrier extension of the Monte Carlo engine.
+///
+/// Discrete monitoring by pathwise checks at monitoring dates (any
+/// process); continuous monitoring GBM-only via Brownian-bridge crossing
+/// probabilities (survival weighting for Europeans, Bernoulli bridge
+/// sampling inside the American LSM). American knock-outs can use a
+/// barrier-aware LSM basis (`MonteCarloParams.barrier_aware_basis`).
+///
+/// The inherited pathwise / likelihood-ratio estimators are vanilla-only;
+/// the facade rejects them for barriers before dispatching here.
+class McBarrierEngine final : public McEngine {
+public:
+    /// Requires a `BarrierSpec` in `state`. Rejects continuous monitoring on
+    /// non-GBM processes; warns on the LSM-biased American knock-outs.
+    explicit McBarrierEngine(const detail::ValuationState& state);
+
+private:
     /// European barrier legs per path: the weight applied to the discounted
     /// vanilla payoff (0/1 for discrete, survival probability for
     /// continuous) and the already-discounted rebate PV.
@@ -79,6 +106,10 @@ private:
         IndexArray first_hit_step;
     };
 
+    [[nodiscard]] Eigen::ArrayXd present_value_pathwise() const override;
+    [[nodiscard]] std::string_view std_error_label() const override;
+
+    [[nodiscard]] const BarrierSpec& spec() const;
     /// Sorted unique grid indices at which the barrier is observed,
     /// clipped to `end_index` (every index for continuous monitoring).
     [[nodiscard]] std::vector<Eigen::Index> barrier_monitoring_indices(
@@ -121,10 +152,6 @@ private:
                                                       const Eigen::ArrayXd& intrinsic,
                                                       const Eigen::ArrayXd& discounted_next,
                                                       const BoolArray& hit_t) const;
-    [[nodiscard]] std::pair<double, double> risk_free_and_div_rates(double ttm) const;
-
-    const detail::ValuationState& state_;
-    mutable std::optional<SimulationResult> simulation_;
 };
 
 }  // namespace dp::engines

@@ -133,23 +133,23 @@ std::unique_ptr<engines::PricingEngine> build_engine(const detail::ValuationStat
     const auto exercise = state.exercise_type();
 
     if (std::holds_alternative<BarrierSpec>(state.spec)) {
-        if (method == PricingMethod::Bsm) {
-            if (exercise != ExerciseType::European) {
-                throw UnsupportedFeatureError(
-                    "BSM is only applicable to European option valuation. Select a different "
-                    "pricing method for American options such as Binomial, PDE_FD or "
-                    "MONTE_CARLO.");
-            }
-            return std::make_unique<engines::AnalyticalBarrierEngine>(state);
+        switch (method) {
+            case PricingMethod::Bsm:
+                if (exercise != ExerciseType::European) {
+                    throw UnsupportedFeatureError(
+                        "BSM is only applicable to European option valuation. Select a "
+                        "different pricing method for American options such as Binomial, "
+                        "PDE_FD or MONTE_CARLO.");
+                }
+                return std::make_unique<engines::AnalyticalBarrierEngine>(state);
+            case PricingMethod::Binomial:
+                return std::make_unique<engines::BinomialBarrierEngine>(state);
+            case PricingMethod::PdeFd:
+                return std::make_unique<engines::PdeBarrierEngine>(state);
+            case PricingMethod::MonteCarlo:
+                return std::make_unique<engines::McBarrierEngine>(state);
         }
-        if (method == PricingMethod::Binomial) {
-            return std::make_unique<engines::BinomialBarrierEngine>(state);
-        }
-        if (method == PricingMethod::PdeFd) {
-            return std::make_unique<engines::PdeBarrierEngine>(state);
-        }
-        // Monte Carlo barriers dispatch through the standard engine switch
-        // below.
+        throw ConfigurationError("unknown pricing method");
     }
 
     switch (method) {

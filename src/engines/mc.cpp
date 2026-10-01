@@ -384,31 +384,7 @@ ArrayXd ridge_barrier_lsm_continuation(const ArrayXd& spots,
 
 }  // namespace
 
-McEngine::McEngine(const detail::ValuationState& state) : state_(state) {
-    const auto* barrier = std::get_if<BarrierSpec>(&state_.spec);
-    if (barrier == nullptr) {
-        return;
-    }
-    if (barrier->monitoring() == BarrierMonitoring::Continuous && !state_.underlying.is_gbm()) {
-        throw UnsupportedFeatureError(
-            "Continuous barrier monitoring requires GBMProcess (log-normal paths). Use "
-            "DISCRETE monitoring for non-GBM processes.");
-    }
-    if (barrier->action() == BarrierAction::Out &&
-        barrier->exercise_type() == ExerciseType::American &&
-        !detail::barrier_triggered_at_inception(state_)) {
-        const bool down_out_put = barrier->direction() == BarrierDirection::Down &&
-                                  barrier->option_type() == OptionType::Put;
-        const bool up_out_call = barrier->direction() == BarrierDirection::Up &&
-                                 barrier->option_type() == OptionType::Call;
-        if (down_out_put || up_out_call) {
-            warn(
-                "American barrier Monte Carlo LSM can show significant downward bias for "
-                "down-and-out puts and up-and-out calls. Prefer PDE_FD for production "
-                "pricing.");
-        }
-    }
-}
+McEngine::McEngine(const detail::ValuationState& state) : state_(state) {}
 
 const SimulationResult& McEngine::simulation() const {
     if (!simulation_.has_value()) {
@@ -459,346 +435,7 @@ ArrayXd McEngine::effective_terminal_z(Index maturity_index, double ttm) const {
     return z / std::sqrt(ttm);
 }
 
-std::vector<Index> McEngine::barrier_monitoring_indices(const SimulationResult& sim,
-                                                        Index end_index) const {
-    const auto& spec = std::get<BarrierSpec>(state_.spec);
-    std::vector<Index> indices;
-    if (spec.monitoring() == BarrierMonitoring::Continuous) {
-        indices.reserve(static_cast<std::size_t>(end_index) + 1);
-        for (Index i = 0; i <= end_index; ++i) {
-            indices.push_back(i);
-        }
-        return indices;
-    }
-
-    std::set<Index> unique_indices;
-    const auto dates = detail::barrier_monitoring_dates(state_);
-    if (!dates.has_value()) {
-        throw ValidationError(
-            "Discrete barrier monitoring requires num_observations or monitoring_dates.");
-    }
-    for (const DateTime date : *dates) {
-        unique_indices.insert(
-            resolve_time_index(sim.dates, sim.time_grid, date, "monitoring date", state_));
-    }
-    for (const Index index : unique_indices) {
-        if (index <= end_index) {
-            indices.push_back(index);
-        }
-    }
-    return indices;
-}
-
-ArrayXd McEngine::barrier_pathwise_european() const {
-    const auto& spec = std::get<BarrierSpec>(state_.spec);
-    const SimulationResult& sim = simulation();
-    const Index end =
-        resolve_time_index(sim.dates, sim.time_grid, state_.maturity(), "maturity", state_);
-    const auto& curve = state_.discount_curve();
-
-    const ArrayXd payoff = payoff_at(sim.paths.col(end).array());
-
-    ArrayXd grid_dfs(sim.time_grid.size());
-    for (Index i = 0; i < sim.time_grid.size(); ++i) {
-        grid_dfs[i] = curve.df(sim.time_grid[i]);
-    }
-
-    const BarrierWeights legs = spec.monitoring() == BarrierMonitoring::Continuous
-                                    ? continuous_weights(sim, end, grid_dfs)
-                                    : discrete_weights(sim, end, grid_dfs);
-
-    return curve.df(state_.maturity_year_fraction()) * payoff * legs.weight + legs.rebate_pv;
-}
-
-McEngine::BarrierWeights McEngine::continuous_weights(const SimulationResult& sim,
-                                                      Index end,
-                                                      const ArrayXd& grid_dfs) const {
-    const auto& spec = std::get<BarrierSpec>(state_.spec);
-    const Index n_paths = sim.paths.rows();
-    const bool is_out = spec.action() == BarrierAction::Out;
-    const double rebate = spec.rebate();
-    const bool rebate_at_hit = spec.rebate_timing() == RebateTiming::AtHit;
-
-    BarrierWeights legs{.weight = ArrayXd(n_paths), .rebate_pv = ArrayXd::Zero(n_paths)};
-
-    if (detail::barrier_triggered_at_inception(state_)) {
-        legs.weight.setConstant(is_out ? 0.0 : 1.0);
-        if (rebate > 0.0 && is_out) {
-            legs.rebate_pv.setConstant(rebate_at_hit ? rebate : rebate * grid_dfs[end]);
-        }
-        return legs;
-    }
-
-    const auto& curve = state_.discount_curve();
-    const double barrier = spec.barrier();
-    const bool is_up = spec.direction() == BarrierDirection::Up;
-    const double sigma = state_.underlying.volatility();
-    const DayCountConvention dcc = state_.day_count_convention();
-
-    ArrayXd survival = ArrayXd::Ones(n_paths);
-    ArrayXd distance_prev = signed_barrier_distance(sim.paths.col(0).array(), barrier, is_up);
-    for (Index t = 1; t <= end; ++t) {
-        const double dt_step = year_fraction(sim.dates[static_cast<std::size_t>(t) - 1],
-                                             sim.dates[static_cast<std::size_t>(t)],
-                                             dcc);
-        ArrayXd distance = signed_barrier_distance(sim.paths.col(t).array(), barrier, is_up);
-        const ArrayXd p_hit = brownian_bridge_hit_prob(distance_prev, distance, sigma, dt_step);
-        distance_prev = std::move(distance);
-        if (rebate > 0.0 && is_out && rebate_at_hit) {
-            // The intra-step hit time is unknown: discount to the interval
-            // midpoint.
-            const double midpoint_df = curve.df(0.5 * (sim.time_grid[t - 1] + sim.time_grid[t]));
-            legs.rebate_pv += survival * p_hit * midpoint_df * rebate;
-        }
-        survival *= 1.0 - p_hit;
-    }
-
-    if (is_out) {
-        legs.weight = survival;
-    } else {
-        legs.weight = 1.0 - survival;
-    }
-    if (rebate > 0.0) {
-        if (is_out && !rebate_at_hit) {
-            legs.rebate_pv = (1.0 - survival) * rebate * grid_dfs[end];
-        } else if (!is_out) {
-            legs.rebate_pv = survival * rebate * grid_dfs[end];
-        }
-    }
-    return legs;
-}
-
-McEngine::BarrierWeights McEngine::discrete_weights(const SimulationResult& sim,
-                                                    Index end,
-                                                    const ArrayXd& grid_dfs) const {
-    const auto& spec = std::get<BarrierSpec>(state_.spec);
-    const Index n_paths = sim.paths.rows();
-    const bool is_out = spec.action() == BarrierAction::Out;
-    const double rebate = spec.rebate();
-    const bool rebate_at_hit = spec.rebate_timing() == RebateTiming::AtHit;
-    const bool inception_hit = detail::barrier_triggered_at_inception(state_);
-
-    BoolArray ever_hit = BoolArray::Constant(n_paths, inception_hit);
-    IndexArray first_hit_step = IndexArray::Constant(n_paths, inception_hit ? 0 : -1);
-    for (const Index idx : barrier_monitoring_indices(sim, end)) {
-        if (idx == 0) {
-            continue;
-        }
-        record_hits(ever_hit,
-                    first_hit_step,
-                    barrier_hit(sim.paths.col(idx).array(),
-                                spec.barrier(),
-                                spec.direction() == BarrierDirection::Up),
-                    idx);
-    }
-
-    BarrierWeights legs{.weight = ArrayXd(n_paths), .rebate_pv = ArrayXd::Zero(n_paths)};
-    if (is_out) {
-        legs.weight = (!ever_hit).cast<double>();
-    } else {
-        legs.weight = ever_hit.cast<double>();
-    }
-    if (rebate > 0.0) {
-        for (Index p = 0; p < n_paths; ++p) {
-            if (is_out && ever_hit[p]) {
-                legs.rebate_pv[p] =
-                    rebate * (rebate_at_hit ? grid_dfs[first_hit_step[p]] : grid_dfs[end]);
-            } else if (!is_out && !ever_hit[p]) {
-                legs.rebate_pv[p] = rebate * grid_dfs[end];
-            }
-        }
-    }
-    return legs;
-}
-
-ArrayXd McEngine::barrier_pathwise_american() const {
-    const auto& spec = std::get<BarrierSpec>(state_.spec);
-    const SimulationResult& sim = simulation();
-    const Index start =
-        resolve_time_index(sim.dates, sim.time_grid, state_.pricing_date(), "Pricing date", state_);
-    const Index end =
-        resolve_time_index(sim.dates, sim.time_grid, state_.maturity(), "maturity", state_);
-    const Index n_times = end - start + 1;
-    const Index n_paths = sim.paths.rows();
-    const bool is_out = spec.action() == BarrierAction::Out;
-    const bool inception_hit = detail::barrier_triggered_at_inception(state_);
-
-    const ArrayXd dfs = state_.discount_curve().df(
-        (sim.time_grid.segment(start, n_times) - sim.time_grid[start]).eval());
-
-    // KO triggered at inception: dead, no exercise — the rebate PV per its
-    // timing rule, bypassing the LSM induction entirely.
-    if (is_out && inception_hit) {
-        double value = 0.0;
-        if (spec.rebate() > 0.0) {
-            value = spec.rebate_timing() == RebateTiming::AtHit ? spec.rebate()
-                                                                : spec.rebate() * dfs[n_times - 1];
-        }
-        return ArrayXd::Constant(n_paths, value);
-    }
-
-    const BarrierPathState path_state = american_barrier_state(sim, start, n_times);
-    ArrayXd values =
-        initial_barrier_values(payoff_at(sim.paths.col(end).array()), path_state.ever_hit.back());
-
-    for (Index t = n_times - 2; t >= 1; --t) {
-        const ArrayXd spots = sim.paths.col(start + t).array();
-        const ArrayXd intrinsic = payoff_at(spots);
-        const ArrayXd discounted_next = (dfs[t + 1] / dfs[t]) * values;
-        values = is_out
-                     ? knock_out_step_values(t, spots, intrinsic, discounted_next, path_state, dfs)
-                     : knock_in_step_values(spots,
-                                            intrinsic,
-                                            discounted_next,
-                                            path_state.ever_hit[static_cast<std::size_t>(t)]);
-    }
-
-    // t = 0: a knock-in that is not yet triggered has no immediate-exercise
-    // right — pure continuation.
-    std::optional<double> immediate;
-    if (is_out || inception_hit) {
-        immediate = payoff_at(sim.paths.col(start).array()).mean();
-    }
-    return time_zero_lsm_value((dfs[1] / dfs[0]) * values, immediate);
-}
-
-McEngine::BarrierPathState McEngine::american_barrier_state(const SimulationResult& sim,
-                                                            Index start,
-                                                            Index n_times) const {
-    const auto& spec = std::get<BarrierSpec>(state_.spec);
-    const Index n_paths = sim.paths.rows();
-    const double barrier = spec.barrier();
-    const bool is_up = spec.direction() == BarrierDirection::Up;
-    const bool continuous = spec.monitoring() == BarrierMonitoring::Continuous;
-    const bool inception_hit = detail::barrier_triggered_at_inception(state_);
-
-    BarrierPathState path_state{
-        .ever_hit = {}, .first_hit_step = IndexArray::Constant(n_paths, inception_hit ? 0 : -1)};
-    path_state.ever_hit.reserve(static_cast<std::size_t>(n_times));
-    path_state.ever_hit.emplace_back(BoolArray::Constant(n_paths, inception_hit));
-
-    std::set<Index> monitoring_set;
-    for (const Index idx : barrier_monitoring_indices(sim, start + n_times - 1)) {
-        monitoring_set.insert(idx);
-    }
-
-    // Independent stream for the Bernoulli bridge sampling.
-    const auto& seed = mc_params(state_).random_seed;
-    pcg64 bridge_rng = seed.has_value() ? pcg64(*seed, kBridgeStream)
-                                        : pcg64(pcg_extras::seed_seq_from<std::random_device>{});
-    const double sigma = state_.underlying.volatility();
-    const DayCountConvention dcc = state_.day_count_convention();
-
-    // Continuous monitoring carries each node's log-distance to the next
-    // step so every node's log is taken once.
-    ArrayXd distance_prev;
-    if (continuous) {
-        distance_prev = signed_barrier_distance(sim.paths.col(start).array(), barrier, is_up);
-    }
-
-    for (Index t = 1; t < n_times; ++t) {
-        path_state.ever_hit.push_back(path_state.ever_hit.back());
-        if (!continuous && !monitoring_set.contains(start + t)) {
-            continue;
-        }
-        const auto spots_curr = sim.paths.col(start + t).array();
-
-        BoolArray step_hit(n_paths);
-        if (continuous) {
-            const double dt_step = year_fraction(sim.dates[static_cast<std::size_t>(start + t) - 1],
-                                                 sim.dates[static_cast<std::size_t>(start + t)],
-                                                 dcc);
-            ArrayXd distance = signed_barrier_distance(spots_curr, barrier, is_up);
-            const ArrayXd p_hit = brownian_bridge_hit_prob(distance_prev, distance, sigma, dt_step);
-            distance_prev = std::move(distance);
-            for (Index p = 0; p < n_paths; ++p) {
-                step_hit[p] = open_uniform(bridge_rng) < p_hit[p];
-            }
-        } else {
-            step_hit = barrier_hit(spots_curr, barrier, is_up);
-        }
-        record_hits(path_state.ever_hit.back(), path_state.first_hit_step, step_hit, t);
-    }
-    return path_state;
-}
-
-ArrayXd McEngine::initial_barrier_values(const ArrayXd& intrinsic_end,
-                                         const BoolArray& hit_end) const {
-    const auto& spec = std::get<BarrierSpec>(state_.spec);
-    const double rebate = spec.rebate();
-    if (spec.action() == BarrierAction::Out) {
-        if (rebate > 0.0 && spec.rebate_timing() == RebateTiming::AtExpiry) {
-            return hit_end.select(rebate, intrinsic_end);
-        }
-        return (!hit_end).cast<double>() * intrinsic_end;
-    }
-    ArrayXd values = hit_end.cast<double>() * intrinsic_end;
-    if (rebate > 0.0) {
-        values += rebate * (!hit_end).cast<double>();
-    }
-    return values;
-}
-
-ArrayXd McEngine::knock_out_step_values(Index t,
-                                        const ArrayXd& spots,
-                                        const ArrayXd& intrinsic,
-                                        const ArrayXd& discounted_next,
-                                        const BarrierPathState& state,
-                                        const ArrayXd& dfs) const {
-    const auto& spec = std::get<BarrierSpec>(state_.spec);
-    const MonteCarloParams& params = mc_params(state_);
-    const BoolArray& hit_t = state.ever_hit[static_cast<std::size_t>(t)];
-    const BoolArray alive = !hit_t;
-    const BoolArray itm = (intrinsic > 0.0) && alive;
-
-    const ArrayXd continuation =
-        params.barrier_aware_basis
-            ? ridge_barrier_lsm_continuation(spots,
-                                             discounted_next,
-                                             itm,
-                                             spec.strike(),
-                                             spec.barrier(),
-                                             spec.direction() == BarrierDirection::Up,
-                                             params)
-            : ridge_lsm_continuation(spots, discounted_next, itm, spec.strike(), params);
-    ArrayXd values = (alive && (intrinsic > continuation)).select(intrinsic, discounted_next);
-
-    const double rebate = spec.rebate();
-    if (rebate > 0.0 && spec.rebate_timing() == RebateTiming::AtHit) {
-        for (Index p = 0; p < values.size(); ++p) {
-            if (state.first_hit_step[p] == t) {
-                values[p] = rebate;
-            } else if (hit_t[p]) {
-                values[p] = 0.0;
-            }
-        }
-        return values;
-    }
-    if (rebate > 0.0) {
-        const double rebate_hold = rebate * (dfs[dfs.size() - 1] / dfs[t]);
-        return hit_t.select(rebate_hold, values);
-    }
-    return hit_t.select(0.0, values);
-}
-
-ArrayXd McEngine::knock_in_step_values(const ArrayXd& spots,
-                                       const ArrayXd& intrinsic,
-                                       const ArrayXd& discounted_next,
-                                       const BoolArray& hit_t) const {
-    const BoolArray itm_active = (intrinsic > 0.0) && hit_t;
-    const ArrayXd continuation = ridge_lsm_continuation(spots,
-                                                        discounted_next,
-                                                        itm_active,
-                                                        std::get<BarrierSpec>(state_.spec).strike(),
-                                                        mc_params(state_));
-    return (hit_t && (intrinsic > continuation)).select(intrinsic, discounted_next);
-}
-
 ArrayXd McEngine::present_value_pathwise() const {
-    if (std::holds_alternative<BarrierSpec>(state_.spec)) {
-        return state_.exercise_type() == ExerciseType::European ? barrier_pathwise_european()
-                                                                : barrier_pathwise_american();
-    }
     if (state_.exercise_type() == ExerciseType::European) {
         const Terminal at_expiry = terminal();
         return at_expiry.df * payoff_at(at_expiry.spot);
@@ -832,16 +469,14 @@ ArrayXd McEngine::present_value_pathwise() const {
                                payoff_at(sim.paths.col(start).array()).mean());
 }
 
+std::string_view McEngine::std_error_label() const {
+    return state_.exercise_type() == ExerciseType::European ? "European" : "American";
+}
+
 double McEngine::present_value() const {
     const ArrayXd pv_pathwise = present_value_pathwise();
     const double pv = pv_pathwise.mean();
-    const bool european = state_.exercise_type() == ExerciseType::European;
-    const bool barrier = std::holds_alternative<BarrierSpec>(state_.spec);
-    std::string_view label = european ? "European" : "American";
-    if (barrier) {
-        label = european ? "Barrier European" : "Barrier American";
-    }
-    warn_if_high_std_error(pv_pathwise, pv, mc_params(state_), label);
+    warn_if_high_std_error(pv_pathwise, pv, mc_params(state_), std_error_label());
     return pv;
 }
 
@@ -985,6 +620,379 @@ double McEngine::gamma_pathwise_fd(std::optional<double> epsilon) const {
             .mean();
     };
     return (bumped_delta(s0 + h) - bumped_delta(s0 - h)) / (2.0 * h);
+}
+
+// ── Barrier engine ──────────────────────────────────────────────────
+
+McBarrierEngine::McBarrierEngine(const detail::ValuationState& state) : McEngine(state) {
+    const auto* barrier = std::get_if<BarrierSpec>(&state_.spec);
+    if (barrier == nullptr) {
+        throw ConfigurationError("McBarrierEngine requires a BarrierSpec");
+    }
+    if (barrier->monitoring() == BarrierMonitoring::Continuous && !state_.underlying.is_gbm()) {
+        throw UnsupportedFeatureError(
+            "Continuous barrier monitoring requires GBMProcess (log-normal paths). Use "
+            "DISCRETE monitoring for non-GBM processes.");
+    }
+    if (barrier->action() == BarrierAction::Out &&
+        barrier->exercise_type() == ExerciseType::American &&
+        !detail::barrier_triggered_at_inception(state_)) {
+        const bool down_out_put = barrier->direction() == BarrierDirection::Down &&
+                                  barrier->option_type() == OptionType::Put;
+        const bool up_out_call = barrier->direction() == BarrierDirection::Up &&
+                                 barrier->option_type() == OptionType::Call;
+        if (down_out_put || up_out_call) {
+            warn(
+                "American barrier Monte Carlo LSM can show significant downward bias for "
+                "down-and-out puts and up-and-out calls. Prefer PDE_FD for production "
+                "pricing.");
+        }
+    }
+}
+
+const BarrierSpec& McBarrierEngine::spec() const {
+    return std::get<BarrierSpec>(state_.spec);
+}
+
+ArrayXd McBarrierEngine::present_value_pathwise() const {
+    return state_.exercise_type() == ExerciseType::European ? barrier_pathwise_european()
+                                                            : barrier_pathwise_american();
+}
+
+std::string_view McBarrierEngine::std_error_label() const {
+    return state_.exercise_type() == ExerciseType::European ? "Barrier European"
+                                                            : "Barrier American";
+}
+
+std::vector<Index> McBarrierEngine::barrier_monitoring_indices(const SimulationResult& sim,
+                                                               Index end_index) const {
+    const BarrierSpec& spec = this->spec();
+    std::vector<Index> indices;
+    if (spec.monitoring() == BarrierMonitoring::Continuous) {
+        indices.reserve(static_cast<std::size_t>(end_index) + 1);
+        for (Index i = 0; i <= end_index; ++i) {
+            indices.push_back(i);
+        }
+        return indices;
+    }
+
+    std::set<Index> unique_indices;
+    const auto dates = detail::barrier_monitoring_dates(state_);
+    if (!dates.has_value()) {
+        throw ValidationError(
+            "Discrete barrier monitoring requires num_observations or monitoring_dates.");
+    }
+    for (const DateTime date : *dates) {
+        unique_indices.insert(
+            resolve_time_index(sim.dates, sim.time_grid, date, "monitoring date", state_));
+    }
+    for (const Index index : unique_indices) {
+        if (index <= end_index) {
+            indices.push_back(index);
+        }
+    }
+    return indices;
+}
+
+ArrayXd McBarrierEngine::barrier_pathwise_european() const {
+    const BarrierSpec& spec = this->spec();
+    const SimulationResult& sim = simulation();
+    const Index end =
+        resolve_time_index(sim.dates, sim.time_grid, state_.maturity(), "maturity", state_);
+    const auto& curve = state_.discount_curve();
+
+    const ArrayXd payoff = payoff_at(sim.paths.col(end).array());
+
+    ArrayXd grid_dfs(sim.time_grid.size());
+    for (Index i = 0; i < sim.time_grid.size(); ++i) {
+        grid_dfs[i] = curve.df(sim.time_grid[i]);
+    }
+
+    const BarrierWeights legs = spec.monitoring() == BarrierMonitoring::Continuous
+                                    ? continuous_weights(sim, end, grid_dfs)
+                                    : discrete_weights(sim, end, grid_dfs);
+
+    return curve.df(state_.maturity_year_fraction()) * payoff * legs.weight + legs.rebate_pv;
+}
+
+McBarrierEngine::BarrierWeights McBarrierEngine::continuous_weights(const SimulationResult& sim,
+                                                                    Index end,
+                                                                    const ArrayXd& grid_dfs) const {
+    const BarrierSpec& spec = this->spec();
+    const Index n_paths = sim.paths.rows();
+    const bool is_out = spec.action() == BarrierAction::Out;
+    const double rebate = spec.rebate();
+    const bool rebate_at_hit = spec.rebate_timing() == RebateTiming::AtHit;
+
+    BarrierWeights legs{.weight = ArrayXd(n_paths), .rebate_pv = ArrayXd::Zero(n_paths)};
+
+    if (detail::barrier_triggered_at_inception(state_)) {
+        legs.weight.setConstant(is_out ? 0.0 : 1.0);
+        if (rebate > 0.0 && is_out) {
+            legs.rebate_pv.setConstant(rebate_at_hit ? rebate : rebate * grid_dfs[end]);
+        }
+        return legs;
+    }
+
+    const auto& curve = state_.discount_curve();
+    const double barrier = spec.barrier();
+    const bool is_up = spec.direction() == BarrierDirection::Up;
+    const double sigma = state_.underlying.volatility();
+    const DayCountConvention dcc = state_.day_count_convention();
+
+    ArrayXd survival = ArrayXd::Ones(n_paths);
+    ArrayXd distance_prev = signed_barrier_distance(sim.paths.col(0).array(), barrier, is_up);
+    for (Index t = 1; t <= end; ++t) {
+        const double dt_step = year_fraction(sim.dates[static_cast<std::size_t>(t) - 1],
+                                             sim.dates[static_cast<std::size_t>(t)],
+                                             dcc);
+        ArrayXd distance = signed_barrier_distance(sim.paths.col(t).array(), barrier, is_up);
+        const ArrayXd p_hit = brownian_bridge_hit_prob(distance_prev, distance, sigma, dt_step);
+        distance_prev = std::move(distance);
+        if (rebate > 0.0 && is_out && rebate_at_hit) {
+            // The intra-step hit time is unknown: discount to the interval
+            // midpoint.
+            const double midpoint_df = curve.df(0.5 * (sim.time_grid[t - 1] + sim.time_grid[t]));
+            legs.rebate_pv += survival * p_hit * midpoint_df * rebate;
+        }
+        survival *= 1.0 - p_hit;
+    }
+
+    if (is_out) {
+        legs.weight = survival;
+    } else {
+        legs.weight = 1.0 - survival;
+    }
+    if (rebate > 0.0) {
+        if (is_out && !rebate_at_hit) {
+            legs.rebate_pv = (1.0 - survival) * rebate * grid_dfs[end];
+        } else if (!is_out) {
+            legs.rebate_pv = survival * rebate * grid_dfs[end];
+        }
+    }
+    return legs;
+}
+
+McBarrierEngine::BarrierWeights McBarrierEngine::discrete_weights(const SimulationResult& sim,
+                                                                  Index end,
+                                                                  const ArrayXd& grid_dfs) const {
+    const BarrierSpec& spec = this->spec();
+    const Index n_paths = sim.paths.rows();
+    const bool is_out = spec.action() == BarrierAction::Out;
+    const double rebate = spec.rebate();
+    const bool rebate_at_hit = spec.rebate_timing() == RebateTiming::AtHit;
+    const bool inception_hit = detail::barrier_triggered_at_inception(state_);
+
+    BoolArray ever_hit = BoolArray::Constant(n_paths, inception_hit);
+    IndexArray first_hit_step = IndexArray::Constant(n_paths, inception_hit ? 0 : -1);
+    for (const Index idx : barrier_monitoring_indices(sim, end)) {
+        if (idx == 0) {
+            continue;
+        }
+        record_hits(ever_hit,
+                    first_hit_step,
+                    barrier_hit(sim.paths.col(idx).array(),
+                                spec.barrier(),
+                                spec.direction() == BarrierDirection::Up),
+                    idx);
+    }
+
+    BarrierWeights legs{.weight = ArrayXd(n_paths), .rebate_pv = ArrayXd::Zero(n_paths)};
+    if (is_out) {
+        legs.weight = (!ever_hit).cast<double>();
+    } else {
+        legs.weight = ever_hit.cast<double>();
+    }
+    if (rebate > 0.0) {
+        for (Index p = 0; p < n_paths; ++p) {
+            if (is_out && ever_hit[p]) {
+                legs.rebate_pv[p] =
+                    rebate * (rebate_at_hit ? grid_dfs[first_hit_step[p]] : grid_dfs[end]);
+            } else if (!is_out && !ever_hit[p]) {
+                legs.rebate_pv[p] = rebate * grid_dfs[end];
+            }
+        }
+    }
+    return legs;
+}
+
+ArrayXd McBarrierEngine::barrier_pathwise_american() const {
+    const BarrierSpec& spec = this->spec();
+    const SimulationResult& sim = simulation();
+    const Index start =
+        resolve_time_index(sim.dates, sim.time_grid, state_.pricing_date(), "Pricing date", state_);
+    const Index end =
+        resolve_time_index(sim.dates, sim.time_grid, state_.maturity(), "maturity", state_);
+    const Index n_times = end - start + 1;
+    const Index n_paths = sim.paths.rows();
+    const bool is_out = spec.action() == BarrierAction::Out;
+    const bool inception_hit = detail::barrier_triggered_at_inception(state_);
+
+    const ArrayXd dfs = state_.discount_curve().df(
+        (sim.time_grid.segment(start, n_times) - sim.time_grid[start]).eval());
+
+    // KO triggered at inception: dead, no exercise — the rebate PV per its
+    // timing rule, bypassing the LSM induction entirely.
+    if (is_out && inception_hit) {
+        double value = 0.0;
+        if (spec.rebate() > 0.0) {
+            value = spec.rebate_timing() == RebateTiming::AtHit ? spec.rebate()
+                                                                : spec.rebate() * dfs[n_times - 1];
+        }
+        return ArrayXd::Constant(n_paths, value);
+    }
+
+    const BarrierPathState path_state = american_barrier_state(sim, start, n_times);
+    ArrayXd values =
+        initial_barrier_values(payoff_at(sim.paths.col(end).array()), path_state.ever_hit.back());
+
+    for (Index t = n_times - 2; t >= 1; --t) {
+        const ArrayXd spots = sim.paths.col(start + t).array();
+        const ArrayXd intrinsic = payoff_at(spots);
+        const ArrayXd discounted_next = (dfs[t + 1] / dfs[t]) * values;
+        values = is_out
+                     ? knock_out_step_values(t, spots, intrinsic, discounted_next, path_state, dfs)
+                     : knock_in_step_values(spots,
+                                            intrinsic,
+                                            discounted_next,
+                                            path_state.ever_hit[static_cast<std::size_t>(t)]);
+    }
+
+    // t = 0: a knock-in that is not yet triggered has no immediate-exercise
+    // right — pure continuation.
+    std::optional<double> immediate;
+    if (is_out || inception_hit) {
+        immediate = payoff_at(sim.paths.col(start).array()).mean();
+    }
+    return time_zero_lsm_value((dfs[1] / dfs[0]) * values, immediate);
+}
+
+McBarrierEngine::BarrierPathState McBarrierEngine::american_barrier_state(
+    const SimulationResult& sim, Index start, Index n_times) const {
+    const BarrierSpec& spec = this->spec();
+    const Index n_paths = sim.paths.rows();
+    const double barrier = spec.barrier();
+    const bool is_up = spec.direction() == BarrierDirection::Up;
+    const bool continuous = spec.monitoring() == BarrierMonitoring::Continuous;
+    const bool inception_hit = detail::barrier_triggered_at_inception(state_);
+
+    BarrierPathState path_state{
+        .ever_hit = {}, .first_hit_step = IndexArray::Constant(n_paths, inception_hit ? 0 : -1)};
+    path_state.ever_hit.reserve(static_cast<std::size_t>(n_times));
+    path_state.ever_hit.emplace_back(BoolArray::Constant(n_paths, inception_hit));
+
+    std::set<Index> monitoring_set;
+    for (const Index idx : barrier_monitoring_indices(sim, start + n_times - 1)) {
+        monitoring_set.insert(idx);
+    }
+
+    // Independent stream for the Bernoulli bridge sampling.
+    const auto& seed = mc_params(state_).random_seed;
+    pcg64 bridge_rng = seed.has_value() ? pcg64(*seed, kBridgeStream)
+                                        : pcg64(pcg_extras::seed_seq_from<std::random_device>{});
+    const double sigma = state_.underlying.volatility();
+    const DayCountConvention dcc = state_.day_count_convention();
+
+    // Continuous monitoring carries each node's log-distance to the next
+    // step so every node's log is taken once.
+    ArrayXd distance_prev;
+    if (continuous) {
+        distance_prev = signed_barrier_distance(sim.paths.col(start).array(), barrier, is_up);
+    }
+
+    for (Index t = 1; t < n_times; ++t) {
+        path_state.ever_hit.push_back(path_state.ever_hit.back());
+        if (!continuous && !monitoring_set.contains(start + t)) {
+            continue;
+        }
+        const auto spots_curr = sim.paths.col(start + t).array();
+
+        BoolArray step_hit(n_paths);
+        if (continuous) {
+            const double dt_step = year_fraction(sim.dates[static_cast<std::size_t>(start + t) - 1],
+                                                 sim.dates[static_cast<std::size_t>(start + t)],
+                                                 dcc);
+            ArrayXd distance = signed_barrier_distance(spots_curr, barrier, is_up);
+            const ArrayXd p_hit = brownian_bridge_hit_prob(distance_prev, distance, sigma, dt_step);
+            distance_prev = std::move(distance);
+            for (Index p = 0; p < n_paths; ++p) {
+                step_hit[p] = open_uniform(bridge_rng) < p_hit[p];
+            }
+        } else {
+            step_hit = barrier_hit(spots_curr, barrier, is_up);
+        }
+        record_hits(path_state.ever_hit.back(), path_state.first_hit_step, step_hit, t);
+    }
+    return path_state;
+}
+
+ArrayXd McBarrierEngine::initial_barrier_values(const ArrayXd& intrinsic_end,
+                                                const BoolArray& hit_end) const {
+    const BarrierSpec& spec = this->spec();
+    const double rebate = spec.rebate();
+    if (spec.action() == BarrierAction::Out) {
+        if (rebate > 0.0 && spec.rebate_timing() == RebateTiming::AtExpiry) {
+            return hit_end.select(rebate, intrinsic_end);
+        }
+        return (!hit_end).cast<double>() * intrinsic_end;
+    }
+    ArrayXd values = hit_end.cast<double>() * intrinsic_end;
+    if (rebate > 0.0) {
+        values += rebate * (!hit_end).cast<double>();
+    }
+    return values;
+}
+
+ArrayXd McBarrierEngine::knock_out_step_values(Index t,
+                                               const ArrayXd& spots,
+                                               const ArrayXd& intrinsic,
+                                               const ArrayXd& discounted_next,
+                                               const BarrierPathState& state,
+                                               const ArrayXd& dfs) const {
+    const BarrierSpec& spec = this->spec();
+    const MonteCarloParams& params = mc_params(state_);
+    const BoolArray& hit_t = state.ever_hit[static_cast<std::size_t>(t)];
+    const BoolArray alive = !hit_t;
+    const BoolArray itm = (intrinsic > 0.0) && alive;
+
+    const ArrayXd continuation =
+        params.barrier_aware_basis
+            ? ridge_barrier_lsm_continuation(spots,
+                                             discounted_next,
+                                             itm,
+                                             spec.strike(),
+                                             spec.barrier(),
+                                             spec.direction() == BarrierDirection::Up,
+                                             params)
+            : ridge_lsm_continuation(spots, discounted_next, itm, spec.strike(), params);
+    ArrayXd values = (alive && (intrinsic > continuation)).select(intrinsic, discounted_next);
+
+    const double rebate = spec.rebate();
+    if (rebate > 0.0 && spec.rebate_timing() == RebateTiming::AtHit) {
+        for (Index p = 0; p < values.size(); ++p) {
+            if (state.first_hit_step[p] == t) {
+                values[p] = rebate;
+            } else if (hit_t[p]) {
+                values[p] = 0.0;
+            }
+        }
+        return values;
+    }
+    if (rebate > 0.0) {
+        const double rebate_hold = rebate * (dfs[dfs.size() - 1] / dfs[t]);
+        return hit_t.select(rebate_hold, values);
+    }
+    return hit_t.select(0.0, values);
+}
+
+ArrayXd McBarrierEngine::knock_in_step_values(const ArrayXd& spots,
+                                              const ArrayXd& intrinsic,
+                                              const ArrayXd& discounted_next,
+                                              const BoolArray& hit_t) const {
+    const BoolArray itm_active = (intrinsic > 0.0) && hit_t;
+    const ArrayXd continuation = ridge_lsm_continuation(
+        spots, discounted_next, itm_active, spec().strike(), mc_params(state_));
+    return (hit_t && (intrinsic > continuation)).select(intrinsic, discounted_next);
 }
 
 }  // namespace dp::engines
