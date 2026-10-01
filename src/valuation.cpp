@@ -142,11 +142,14 @@ std::unique_ptr<engines::PricingEngine> build_engine(const detail::ValuationStat
             }
             return std::make_unique<engines::AnalyticalBarrierEngine>(state);
         }
+        if (method == PricingMethod::Binomial) {
+            return std::make_unique<engines::BinomialBarrierEngine>(state);
+        }
         if (method == PricingMethod::PdeFd) {
             return std::make_unique<engines::PdeBarrierEngine>(state);
         }
-        // Binomial and Monte Carlo barriers dispatch through the standard
-        // engine switch below.
+        // Monte Carlo barriers dispatch through the standard engine switch
+        // below.
     }
 
     switch (method) {

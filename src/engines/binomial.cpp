@@ -53,7 +53,7 @@ BinomialEngine::Solution BinomialEngine::nan_solution() {
 void BinomialEngine::capture_step_nodes(Solution& out,
                                         const Setup& s,
                                         const std::vector<double>& values,
-                                        int t) const {
+                                        int t) {
     if (t == 2) {
         out.f02 = values[0];
         out.f12 = values[1];
@@ -82,72 +82,7 @@ int BinomialEngine::base_num_steps() const {
 }
 
 int BinomialEngine::num_steps() const {
-    if (!std::holds_alternative<BarrierSpec>(state_.spec)) {
-        return base_num_steps();
-    }
-    if (!barrier_steps_.has_value()) {
-        barrier_steps_ = resolve_barrier_num_steps();
-    }
-    return *barrier_steps_;
-}
-
-int BinomialEngine::resolve_barrier_num_steps() const {
-    const auto& spec = std::get<BarrierSpec>(state_.spec);
-    const int base_steps = base_num_steps();
-    const double spot = state_.underlying.initial_value();
-    const double barrier = spec.barrier();
-    const double sigma = state_.underlying.volatility();
-    const double ttm = state_.maturity_year_fraction();
-    if (spot <= 0.0 || barrier <= 0.0 || sigma <= 0.0 || ttm <= 0.0) {
-        return base_steps;
-    }
-
-    // Inception-triggered specs short-circuit before the barrier solver ever
-    // runs, so alignment is moot.
-    if (detail::barrier_triggered_at_inception(state_)) {
-        return base_steps;
-    }
-
-    const double log_distance = std::log(std::max(spot, barrier) / std::min(spot, barrier));
-    const double divisor = log_distance * log_distance;
-    if (divisor <= 0.0) {
-        return base_steps;
-    }
-
-    // Continuous: place a CRR layer on H (Boyle-Lau 1994, factor = i).
-    // Discrete:   place H midway between two CRR layers (factor = i - 0.5),
-    // the binomial analog of Cheuk-Vorst 1996 / Boyle-Tian 1998 — on-layer
-    // placement introduces a first-order grid bias in the kill threshold.
-    const double shift = spec.monitoring() == BarrierMonitoring::Continuous ? 0.0 : 0.5;
-    const int max_steps = std::max(1000, base_steps * 5);
-    for (int i = 1; i <= base_steps; ++i) {
-        const double factor = i - shift;
-        const auto candidate = static_cast<int>((factor * factor * sigma * sigma * ttm) / divisor);
-        if (candidate >= base_steps) {
-            if (candidate > max_steps) {
-                // Alignment unattainable within the memory budget — warn and
-                // fall back to unaligned at `max_steps`.
-                const double log_distance_pct =
-                    100.0 * log_distance / std::max(std::log(spot), 1.0e-12);
-                warn(std::format(
-                    "Binomial barrier pricing: Boyle-Lau step alignment needs ~{} time steps "
-                    "to place a tree layer on the barrier (spot={:g}, barrier={:g}, "
-                    "|log(H/S)|={:.2e}, ~{:.3f}% of log-spot), but the step cap is {}. The "
-                    "tree will run at {} steps without barrier alignment and the price will "
-                    "converge only as O(1/√n) with a large constant. For barriers this close "
-                    "to spot, PDE_FD is strongly recommended as the more accurate engine.",
-                    candidate,
-                    spot,
-                    barrier,
-                    log_distance,
-                    log_distance_pct,
-                    max_steps,
-                    max_steps));
-            }
-            return std::min(candidate, max_steps);
-        }
-    }
-    return base_steps;
+    return base_num_steps();
 }
 
 bool BinomialEngine::early_exercise() const {
@@ -242,6 +177,7 @@ const BinomialEngine::Setup& BinomialEngine::setup() const {
     }
 
     setup_.emplace(Setup{
+        .num_steps = n,
         .delta_t = delta_t,
         .discount_factors = (-forward_rates * delta_t).exp(),
         .p = (growth - d) / (u - d),
@@ -252,9 +188,8 @@ const BinomialEngine::Setup& BinomialEngine::setup() const {
     return *setup_;
 }
 
-double BinomialEngine::spot_at(const Setup& s, int i, int t) const {
-    const int n = num_steps();
-    double value = s.escrowed_spot * s.up_powers[t - 2 * i + n];
+double BinomialEngine::spot_at(const Setup& s, int i, int t) {
+    double value = s.escrowed_spot * s.up_powers[t - 2 * i + s.num_steps];
     if (s.pv_remaining.size() > 0) {
         value += s.pv_remaining[t];
     }
@@ -262,10 +197,13 @@ double BinomialEngine::spot_at(const Setup& s, int i, int t) const {
 }
 
 const BinomialEngine::Solution& BinomialEngine::solution() const {
-    if (solution_.has_value()) {
-        return *solution_;
+    if (!solution_.has_value()) {
+        solution_.emplace(compute_solution());
     }
+    return *solution_;
+}
 
+BinomialEngine::Solution BinomialEngine::compute_solution() const {
     const int n = num_steps();
     const Setup& s = setup();
     const bool early = early_exercise();
@@ -335,15 +273,121 @@ const BinomialEngine::Solution& BinomialEngine::solution() const {
         capture_step_nodes(out, s, values, t);
     }
     out.pv = values[0];
-
-    solution_.emplace(out);
-    return *solution_;
+    return out;
 }
 
-// ── Barrier machinery ───────────────────────────────────────────────
+// ── Public interface ────────────────────────────────────────────────
 
-std::vector<char> BinomialEngine::monitoring_step_mask(int num_steps) const {
-    const auto& spec = std::get<BarrierSpec>(state_.spec);
+double BinomialEngine::present_value() const {
+    return solution().pv;
+}
+
+double BinomialEngine::delta() const {
+    const Solution& r = solution();
+    return (r.f01 - r.f11) / (r.s01 - r.s11);
+}
+
+double BinomialEngine::gamma() const {
+    if (num_steps() < 2) {
+        throw ValidationError("Tree gamma requires num_steps >= 2.");
+    }
+    const Solution& r = solution();
+    const double delta_up = (r.f02 - r.f12) / (r.s02 - r.s12);
+    const double delta_down = (r.f12 - r.f22) / (r.s12 - r.s22);
+    const double h = (r.s02 - r.s22) / 2.0;
+    return (delta_up - delta_down) / h;
+}
+
+double BinomialEngine::theta() const {
+    if (num_steps() < 2) {
+        throw ValidationError("Tree theta requires num_steps >= 2.");
+    }
+    const Solution& r = solution();
+    const double dt = state_.maturity_year_fraction() / num_steps();
+    return (r.f12 - r.pv) / (2.0 * dt) / kDaysPerYear;
+}
+
+// ── Barrier engine ──────────────────────────────────────────────────
+
+BinomialBarrierEngine::BinomialBarrierEngine(const detail::ValuationState& state)
+    : BinomialEngine(state) {
+    if (!std::holds_alternative<BarrierSpec>(state_.spec)) {
+        throw ConfigurationError("BinomialBarrierEngine requires a BarrierSpec");
+    }
+}
+
+const BarrierSpec& BinomialBarrierEngine::spec() const {
+    return std::get<BarrierSpec>(state_.spec);
+}
+
+int BinomialBarrierEngine::num_steps() const {
+    if (!barrier_steps_.has_value()) {
+        barrier_steps_ = resolve_barrier_num_steps();
+    }
+    return *barrier_steps_;
+}
+
+int BinomialBarrierEngine::resolve_barrier_num_steps() const {
+    const BarrierSpec& spec = this->spec();
+    const int base_steps = base_num_steps();
+    const double spot = state_.underlying.initial_value();
+    const double barrier = spec.barrier();
+    const double sigma = state_.underlying.volatility();
+    const double ttm = state_.maturity_year_fraction();
+    if (spot <= 0.0 || barrier <= 0.0 || sigma <= 0.0 || ttm <= 0.0) {
+        return base_steps;
+    }
+
+    // Inception-triggered specs short-circuit before the barrier solver ever
+    // runs, so alignment is moot.
+    if (detail::barrier_triggered_at_inception(state_)) {
+        return base_steps;
+    }
+
+    const double log_distance = std::log(std::max(spot, barrier) / std::min(spot, barrier));
+    const double divisor = log_distance * log_distance;
+    if (divisor <= 0.0) {
+        return base_steps;
+    }
+
+    // Continuous: place a CRR layer on H (Boyle-Lau 1994, factor = i).
+    // Discrete:   place H midway between two CRR layers (factor = i - 0.5),
+    // the binomial analog of Cheuk-Vorst 1996 / Boyle-Tian 1998 — on-layer
+    // placement introduces a first-order grid bias in the kill threshold.
+    const double shift = spec.monitoring() == BarrierMonitoring::Continuous ? 0.0 : 0.5;
+    const int max_steps = std::max(1000, base_steps * 5);
+    for (int i = 1; i <= base_steps; ++i) {
+        const double factor = i - shift;
+        const auto candidate = static_cast<int>((factor * factor * sigma * sigma * ttm) / divisor);
+        if (candidate >= base_steps) {
+            if (candidate > max_steps) {
+                // Alignment unattainable within the memory budget — warn and
+                // fall back to unaligned at `max_steps`.
+                const double log_distance_pct =
+                    100.0 * log_distance / std::max(std::log(spot), 1.0e-12);
+                warn(std::format(
+                    "Binomial barrier pricing: Boyle-Lau step alignment needs ~{} time steps "
+                    "to place a tree layer on the barrier (spot={:g}, barrier={:g}, "
+                    "|log(H/S)|={:.2e}, ~{:.3f}% of log-spot), but the step cap is {}. The "
+                    "tree will run at {} steps without barrier alignment and the price will "
+                    "converge only as O(1/√n) with a large constant. For barriers this close "
+                    "to spot, PDE_FD is strongly recommended as the more accurate engine.",
+                    candidate,
+                    spot,
+                    barrier,
+                    log_distance,
+                    log_distance_pct,
+                    max_steps,
+                    max_steps));
+            }
+            return std::min(candidate, max_steps);
+        }
+    }
+    return base_steps;
+}
+
+std::vector<char> BinomialBarrierEngine::monitoring_step_mask(int num_steps) const {
+    const BarrierSpec& spec = this->spec();
     const auto size = static_cast<std::size_t>(num_steps) + 1;
 
     // The `.empty()` guards are provably dead (size >= 1) but stop GCC's
@@ -398,9 +442,9 @@ std::vector<char> BinomialEngine::monitoring_step_mask(int num_steps) const {
     return mask;
 }
 
-Eigen::ArrayXd BinomialEngine::ko_rebate_values(const Setup& s) const {
-    const auto& spec = std::get<BarrierSpec>(state_.spec);
-    const int n = num_steps();
+Eigen::ArrayXd BinomialBarrierEngine::ko_rebate_values(const Setup& s) const {
+    const BarrierSpec& spec = this->spec();
+    const int n = s.num_steps;
     const double rebate = spec.rebate();
     if (rebate <= 0.0) {
         return Eigen::ArrayXd::Zero(n + 1);
@@ -419,11 +463,11 @@ Eigen::ArrayXd BinomialEngine::ko_rebate_values(const Setup& s) const {
     return values;
 }
 
-BinomialEngine::Solution BinomialEngine::solve_knock_out() const {
+BinomialEngine::Solution BinomialBarrierEngine::solve_knock_out() const {
     const int n = num_steps();
     const Setup& s = setup();
     const bool early = early_exercise();
-    const auto& spec = std::get<BarrierSpec>(state_.spec);
+    const BarrierSpec& spec = this->spec();
     const bool is_call = spec.option_type() == OptionType::Call;
     const double strike = spec.strike();
     const double barrier = spec.barrier();
@@ -472,11 +516,11 @@ BinomialEngine::Solution BinomialEngine::solve_knock_out() const {
     return out;
 }
 
-BinomialEngine::Solution BinomialEngine::solve_knock_in() const {
+BinomialEngine::Solution BinomialBarrierEngine::solve_knock_in() const {
     const int n = num_steps();
     const Setup& s = setup();
     const bool early = early_exercise();
-    const auto& spec = std::get<BarrierSpec>(state_.spec);
+    const BarrierSpec& spec = this->spec();
     const bool is_call = spec.option_type() == OptionType::Call;
     const double strike = spec.strike();
     const double barrier = spec.barrier();
@@ -531,7 +575,7 @@ BinomialEngine::Solution BinomialEngine::solve_knock_in() const {
     return out;
 }
 
-BinomialEngine::Solution BinomialEngine::resolved_knock_out_solution() const {
+BinomialEngine::Solution BinomialBarrierEngine::resolved_knock_out_solution() const {
     const int n = num_steps();
     const Setup& s = setup();
     const Eigen::ArrayXd rebate = ko_rebate_values(s);
@@ -555,28 +599,21 @@ BinomialEngine::Solution BinomialEngine::resolved_knock_out_solution() const {
     return out;
 }
 
-const BinomialEngine::Solution& BinomialEngine::barrier_solution() const {
-    if (barrier_solution_.has_value()) {
-        return *barrier_solution_;
-    }
-    const auto& spec = std::get<BarrierSpec>(state_.spec);
+BinomialEngine::Solution BinomialBarrierEngine::compute_solution() const {
+    const bool knock_out = spec().action() == BarrierAction::Out;
     if (detail::barrier_triggered_at_inception(state_)) {
-        if (spec.action() == BarrierAction::Out) {
-            return barrier_solution_.emplace(resolved_knock_out_solution());
-        }
         // Triggered knock-in: the contract is the vanilla.
-        return solution();
+        return knock_out ? resolved_knock_out_solution() : BinomialEngine::compute_solution();
     }
-    return barrier_solution_.emplace(spec.action() == BarrierAction::Out ? solve_knock_out()
-                                                                         : solve_knock_in());
+    return knock_out ? solve_knock_out() : solve_knock_in();
 }
 
-bool BinomialEngine::stencil_straddles_barrier(int step) const {
+bool BinomialBarrierEngine::stencil_straddles_barrier(int step) const {
     // Only continuously monitored, still-alive barriers put an absorbing
     // discontinuity inside the extraction stencil: discrete monitoring only
     // observes at monitoring nodes, and triggered specs collapse to smooth
     // lattices (KO: spot-independent rebate; KI: the vanilla).
-    const auto& spec = std::get<BarrierSpec>(state_.spec);
+    const BarrierSpec& spec = this->spec();
     if (spec.monitoring() != BarrierMonitoring::Continuous) {
         return false;
     }
@@ -594,66 +631,42 @@ bool BinomialEngine::stencil_straddles_barrier(int step) const {
     return false;
 }
 
-// ── Public interface ────────────────────────────────────────────────
-
-double BinomialEngine::present_value() const {
-    if (const auto* spec = std::get_if<BarrierSpec>(&state_.spec)) {
-        if (detail::barrier_triggered_at_inception(state_)) {
-            if (spec->action() == BarrierAction::Out) {
-                // Knocked out immediately: O(1) rebate PV.
-                if (spec->rebate() <= 0.0) {
-                    return 0.0;
-                }
-                if (spec->rebate_timing() == RebateTiming::AtHit) {
-                    return spec->rebate();
-                }
-                return spec->rebate() * state_.discount_curve().df(state_.maturity_year_fraction());
-            }
-            return solution().pv;  // Triggered knock-in: vanilla tree solve.
+double BinomialBarrierEngine::present_value() const {
+    const BarrierSpec& spec = this->spec();
+    if (spec.action() == BarrierAction::Out && detail::barrier_triggered_at_inception(state_)) {
+        // Knocked out immediately: O(1) rebate PV, no tree.
+        if (spec.rebate() <= 0.0) {
+            return 0.0;
         }
-        return barrier_solution().pv;
+        if (spec.rebate_timing() == RebateTiming::AtHit) {
+            return spec.rebate();
+        }
+        return spec.rebate() * state_.discount_curve().df(state_.maturity_year_fraction());
     }
-    return solution().pv;
+    return BinomialEngine::present_value();
 }
 
-double BinomialEngine::delta() const {
-    const bool is_barrier = std::holds_alternative<BarrierSpec>(state_.spec);
-    if (is_barrier && stencil_straddles_barrier(1)) {
+double BinomialBarrierEngine::delta() const {
+    if (stencil_straddles_barrier(1)) {
         throw UnsupportedFeatureError(
             "Binomial tree delta is unreliable when the step-1 extraction stencil straddles "
             "the barrier (spot is too close to H, so the up- or down-node lies past the "
             "absorbing boundary). Use PricingMethod.PDE_FD for greeks in this regime.");
     }
-    const Solution& r = is_barrier ? barrier_solution() : solution();
-    return (r.f01 - r.f11) / (r.s01 - r.s11);
+    return BinomialEngine::delta();
 }
 
-double BinomialEngine::gamma() const {
+double BinomialBarrierEngine::gamma() const {
     if (num_steps() < 2) {
         throw ValidationError("Tree gamma requires num_steps >= 2.");
     }
-    const bool is_barrier = std::holds_alternative<BarrierSpec>(state_.spec);
-    if (is_barrier && stencil_straddles_barrier(2)) {
+    if (stencil_straddles_barrier(2)) {
         throw UnsupportedFeatureError(
             "Binomial tree gamma is unreliable when the step-2 extraction stencil straddles "
             "the barrier (one of the uu/dd nodes lies past the absorbing boundary). Use "
             "PricingMethod.PDE_FD for greeks in this regime.");
     }
-    const Solution& r = is_barrier ? barrier_solution() : solution();
-    const double delta_up = (r.f02 - r.f12) / (r.s02 - r.s12);
-    const double delta_down = (r.f12 - r.f22) / (r.s12 - r.s22);
-    const double h = (r.s02 - r.s22) / 2.0;
-    return (delta_up - delta_down) / h;
-}
-
-double BinomialEngine::theta() const {
-    if (num_steps() < 2) {
-        throw ValidationError("Tree theta requires num_steps >= 2.");
-    }
-    const Solution& r =
-        std::holds_alternative<BarrierSpec>(state_.spec) ? barrier_solution() : solution();
-    const double dt = state_.maturity_year_fraction() / num_steps();
-    return (r.f12 - r.pv) / (2.0 * dt) / kDaysPerYear;
+    return BinomialEngine::gamma();
 }
 
 }  // namespace dp::engines
