@@ -63,6 +63,8 @@ target_sources(
             src/engines/barrier_analytical.cpp
             src/engines/mc.cpp
             src/engines/pde.cpp
+            src/engines/pde_barrier.cpp
+            src/engines/pde_numerics.cpp
             src/enums.cpp
             src/forward.cpp
             src/market_data.cpp

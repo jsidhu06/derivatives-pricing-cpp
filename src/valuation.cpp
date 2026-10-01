@@ -10,6 +10,7 @@
 #include "engines/engine.hpp"
 #include "engines/mc.hpp"
 #include "engines/pde.hpp"
+#include "engines/pde_barrier.hpp"
 #include "valuation_state.hpp"
 
 #include <cctype>
@@ -141,8 +142,11 @@ std::unique_ptr<engines::PricingEngine> build_engine(const detail::ValuationStat
             }
             return std::make_unique<engines::AnalyticalBarrierEngine>(state);
         }
-        // Binomial, PDE and Monte Carlo barriers dispatch through the
-        // standard engine switch below.
+        if (method == PricingMethod::PdeFd) {
+            return std::make_unique<engines::PdeBarrierEngine>(state);
+        }
+        // Binomial and Monte Carlo barriers dispatch through the standard
+        // engine switch below.
     }
 
     switch (method) {
