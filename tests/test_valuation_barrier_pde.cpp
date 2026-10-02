@@ -257,7 +257,13 @@ constexpr GreekOptions kNumerical{.method = GreekCalculationMethod::Numerical};
 
 }  // namespace
 
-TEST_CASE("PDE barriers match the Python reference implementation", "[barrier][pde][golden]") {
+// [slow]: ~17 min under the sanitizer build (44 rows of fine-grid solves
+// plus bump-and-revalue greeks), so the debug presets skip it. It checks
+// numerical parity with Python, which release CI enforces on both compilers;
+// the PDE barrier code paths stay sanitizer-covered by the cases above and
+// the barrier paper tables.
+TEST_CASE("PDE barriers match the Python reference implementation",
+          "[barrier][pde][golden][slow]") {
     for (const auto& row : kPdeBarrierGolden) {
         INFO("row " << row.label);
         const auto ov = replay(row);
