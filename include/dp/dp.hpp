@@ -10,6 +10,7 @@
 #include "dp/enums.hpp"
 #include "dp/exceptions.hpp"
 #include "dp/forward.hpp"
+#include "dp/implied_volatility.hpp"
 #include "dp/market_data.hpp"
 #include "dp/math/normal.hpp"
 #include "dp/params.hpp"

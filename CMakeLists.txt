@@ -67,6 +67,7 @@ target_sources(
             src/engines/pde_numerics.cpp
             src/enums.cpp
             src/forward.cpp
+            src/implied_volatility.cpp
             src/market_data.cpp
             src/math/normal.cpp
             src/params.cpp

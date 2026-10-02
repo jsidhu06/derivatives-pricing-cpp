@@ -8,6 +8,7 @@ add_executable(
     test_discount_curve.cpp
     test_dividends_forward.cpp
     test_enums.cpp
+    test_implied_volatility.cpp
     test_market_data.cpp
     test_normal.cpp
     test_params.cpp
