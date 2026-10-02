@@ -294,6 +294,36 @@ TEST_CASE("CorrelationContext validation", "[processes][correlation]") {
         valid.asset_index("zzz"), ValidationError, message_contains("not found in asset_names"));
 }
 
+TEST_CASE("GbmParams validation", "[processes][gbm]") {
+    CHECK_THROWS_MATCHES(GbmProcess(md(), {.initial_value = 0.0, .volatility = 0.2}, config(10)),
+                         ValidationError,
+                         message_contains("GbmParams.initial_value must be > 0"));
+    CHECK_THROWS_MATCHES(GbmProcess(md(), {.initial_value = 100.0, .volatility = -0.1}, config(10)),
+                         ValidationError,
+                         message_contains("GbmParams.volatility must be >= 0"));
+    // Zero volatility is a valid (deterministic) process.
+    CHECK_NOTHROW(GbmProcess(md(), {.initial_value = 100.0, .volatility = 0.0}, config(10)));
+}
+
+TEST_CASE("singular and near-singular correlation matrices", "[processes][correlation]") {
+    const auto rn = [](std::size_t n) { return CorrelationContext::standard_normals(n, 4, 3, 1); };
+
+    // Perfectly correlated: positive semi-definite but singular, so there is
+    // no Cholesky factor.
+    const Eigen::MatrixXd singular = Eigen::MatrixXd::Ones(2, 2);
+    CHECK_THROWS_MATCHES(CorrelationContext(singular, rn(2), {"a", "b"}),
+                         ValidationError,
+                         message_contains("not positive-definite"));
+
+    // Highly but not perfectly correlated assets must still be accepted.
+    Eigen::MatrixXd near_singular(2, 2);
+    near_singular << 1.0, 0.999, 0.999, 1.0;
+    const CorrelationContext context(near_singular, rn(2), {"a", "b"});
+    const Eigen::MatrixXd product =
+        context.cholesky_matrix() * context.cholesky_matrix().transpose();
+    CHECK((product - near_singular).cwiseAbs().maxCoeff() < 1e-12);
+}
+
 TEST_CASE("Cholesky factor reconstructs the correlation matrix", "[processes][correlation]") {
     Eigen::MatrixXd corr(3, 3);
     corr << 1.0, 0.6, 0.3, 0.6, 1.0, 0.0, 0.3, 0.0, 1.0;
@@ -302,6 +332,18 @@ TEST_CASE("Cholesky factor reconstructs the correlation matrix", "[processes][co
     const Eigen::MatrixXd product =
         context.cholesky_matrix() * context.cholesky_matrix().transpose();
     CHECK((product - corr).cwiseAbs().maxCoeff() < 1e-12);
+
+    // Four assets with zero and negative correlations.
+    Eigen::MatrixXd corr4(4, 4);
+    corr4 << 1.0, 0.3, -0.2, 0.0,  //
+        0.3, 1.0, 0.0, -0.4,       //
+        -0.2, 0.0, 1.0, 0.1,       //
+        0.0, -0.4, 0.1, 1.0;
+    const CorrelationContext context4(
+        corr4, CorrelationContext::standard_normals(4, 2, 2, 1), {"a", "b", "c", "d"});
+    const Eigen::MatrixXd product4 =
+        context4.cholesky_matrix() * context4.cholesky_matrix().transpose();
+    CHECK((product4 - corr4).cwiseAbs().maxCoeff() < 1e-12);
 }
 
 TEST_CASE("correlated processes require a registered name", "[processes][correlation]") {
@@ -417,6 +459,12 @@ TEST_CASE("non-GBM processes are rejected where GBM is required", "[processes][v
             .present_value(),
         ConfigurationError,
         message_contains("Expected UnderlyingData or GbmProcess, got JdProcess."));
+    CHECK_THROWS_MATCHES(
+        OptionValuation(
+            srd, spec(OptionType::Put, ExerciseType::American), PricingMethod::MonteCarlo, cv)
+            .present_value(),
+        ConfigurationError,
+        message_contains("Expected UnderlyingData or GbmProcess, got SrdProcess."));
 }
 
 TEST_CASE("numerical Greeks work for JD and SRD underlyings", "[processes][valuation]") {

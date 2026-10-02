@@ -236,6 +236,10 @@ TEST_CASE("implied vol rejects prices outside the no-arbitrage bounds", "[implie
                              message_contains("outside no-arbitrage bounds"));
     }
     SECTION("negative and non-finite targets") {
+        // Zero sits below an ATM call's no-arbitrage floor (S - K df > 0).
+        CHECK_THROWS_MATCHES(implied_volatility(0.0, bsm(OptionType::Call, 0.2)),
+                             ValidationError,
+                             message_contains("outside no-arbitrage bounds"));
         CHECK_THROWS_MATCHES(implied_volatility(-1.0, bsm(OptionType::Call, 0.2)),
                              ValidationError,
                              message_contains("non-negative"));

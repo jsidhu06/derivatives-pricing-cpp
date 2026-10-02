@@ -156,6 +156,15 @@ TEST_CASE("binomial barrier greek guards", "[barrier][binomial][greeks]") {
         CHECK_THROWS_MATCHES(ov.delta(kNumerical),
                              UnsupportedFeatureError,
                              message_contains("Binomial NUMERICAL bump-and-revalue greeks"));
+        CHECK_THROWS_MATCHES(ov.gamma(kNumerical),
+                             UnsupportedFeatureError,
+                             message_contains("Binomial NUMERICAL bump-and-revalue greeks"));
+        CHECK_THROWS_MATCHES(ov.theta(kNumerical),
+                             UnsupportedFeatureError,
+                             message_contains("Binomial NUMERICAL bump-and-revalue greeks"));
+        CHECK_THROWS_MATCHES(ov.vega(kNumerical),
+                             UnsupportedFeatureError,
+                             message_contains("Binomial NUMERICAL bump-and-revalue greeks"));
         // Vega has no TREE method, so auto-select lands on NUMERICAL and hits
         // the same guard.
         CHECK_THROWS_MATCHES(ov.vega(),
@@ -175,6 +184,28 @@ TEST_CASE("binomial barrier greek guards", "[barrier][binomial][greeks]") {
             ov.gamma(), UnsupportedFeatureError, message_contains("step-2 extraction stencil"));
     }
 
+    SECTION("a step-2 straddle refuses gamma but leaves PV, delta and theta") {
+        // Spot 72.4 under an up barrier at 73: the step-2 up-up node lands on
+        // the barrier under Boyle-Lau alignment. The American put is deep in
+        // the money, so early exercise locks PV = K - S = 7.6, delta = -1 and
+        // theta = 0 — only the step-2 gamma stencil is unusable.
+        const MarketData market(kPricingDate, DiscountCurve::flat(0.05, 2.0), "USD");
+        auto params = base_params(73.0,
+                                  BarrierDirection::Up,
+                                  BarrierAction::Out,
+                                  OptionType::Put,
+                                  ExerciseType::American);
+        params.strike = 80.0;
+        const OptionValuation ov(UnderlyingData(72.4, 0.205, market),
+                                 BarrierSpec(std::move(params)),
+                                 PricingMethod::Binomial);
+        CHECK_THAT(ov.present_value(), close_to(7.6, 0.0, 1e-6));
+        CHECK_THAT(ov.delta(), close_to(-1.0, 0.0, 1e-6));
+        CHECK_THAT(ov.theta(), close_to(0.0, 0.0, 1e-6));
+        CHECK_THROWS_MATCHES(
+            ov.gamma(), UnsupportedFeatureError, message_contains("step-2 extraction stencil"));
+    }
+
     SECTION("unattainable Boyle-Lau alignment warns and caps the steps") {
         const WarningCapture warnings;
         const auto ov =
@@ -183,6 +214,17 @@ TEST_CASE("binomial barrier greek guards", "[barrier][binomial][greeks]") {
         REQUIRE_FALSE(warnings.empty());
         CHECK(warnings.messages().front().find("Boyle-Lau step alignment") != std::string::npos);
     }
+}
+
+TEST_CASE("binomial barriers reject discrete dividends", "[barrier][binomial]") {
+    // The escrowed-dividend tree does not preserve barrier-hit dynamics at
+    // ex-dates; vanillas with the same dividends stay allowed.
+    const UnderlyingData with_dividend(
+        100.0, 0.25, md(), {{kPricingDate + std::chrono::days{90}, 2.0}});
+    CHECK_THROWS_MATCHES(
+        binomial(with_dividend, base_params(115.0, BarrierDirection::Up, BarrierAction::Out)),
+        UnsupportedFeatureError,
+        message_contains("Binomial pricing of barrier options with discrete dividends"));
 }
 
 // ---------------------------------------------------------------------------

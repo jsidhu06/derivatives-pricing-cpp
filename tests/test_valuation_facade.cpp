@@ -176,6 +176,15 @@ TEST_CASE("explicit Greek methods are validated against the engine", "[valuation
                          message_contains("likelihood_ratio greeks are only available"));
     CHECK_NOTHROW(ov.delta({.method = GreekCalculationMethod::Analytical}));
     CHECK_NOTHROW(ov.delta({.method = GreekCalculationMethod::Numerical}));
+
+    // ANALYTICAL is BSM-only.
+    for (const auto method : {PricingMethod::Binomial, PricingMethod::PdeFd}) {
+        INFO(to_string(method));
+        const OptionValuation numerical_engine(ud(), vanilla(), method);
+        CHECK_THROWS_MATCHES(numerical_engine.delta({.method = GreekCalculationMethod::Analytical}),
+                             ValidationError,
+                             message_contains("Analytical greeks are only available for BSM"));
+    }
 }
 
 TEST_CASE("a bump is rejected for non-bumping methods and must be positive",

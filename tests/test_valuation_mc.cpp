@@ -227,6 +227,9 @@ TEST_CASE("pricing method and underlying type must pair up", "[mc][valuation]") 
     CHECK_THROWS_MATCHES(OptionValuation(gbm(100), spec(OptionType::Call), PricingMethod::Binomial),
                          ConfigurationError,
                          message_contains("BINOMIAL pricing requires an UnderlyingData instance"));
+    CHECK_THROWS_MATCHES(OptionValuation(gbm(100), spec(OptionType::Call), PricingMethod::PdeFd),
+                         ConfigurationError,
+                         message_contains("PDE_FD pricing requires an UnderlyingData instance"));
 }
 
 TEST_CASE("pathwise/LR eligibility is enforced", "[mc][greeks]") {
@@ -259,6 +262,9 @@ TEST_CASE("pathwise/LR eligibility is enforced", "[mc][greeks]") {
     const OptionValuation div_ov(with_div, spec(OptionType::Call), PricingMethod::MonteCarlo);
     CHECK_THROWS_MATCHES(
         div_ov.delta(kPathwise), UnsupportedFeatureError, message_contains("discrete dividends"));
+    CHECK_THROWS_MATCHES(div_ov.delta(kLikelihoodRatio),
+                         UnsupportedFeatureError,
+                         message_contains("discrete dividends"));
     // Auto-selection therefore falls back to NUMERICAL and still works.
     CHECK(std::isfinite(div_ov.delta()));
 }
@@ -268,7 +274,16 @@ TEST_CASE("LR estimators reject zero volatility", "[mc][greeks][edge]") {
         gbm(1000, 100.0, 0.0), spec(OptionType::Call), PricingMethod::MonteCarlo);
     CHECK_THROWS_MATCHES(ov.delta(kLikelihoodRatio),
                          UnsupportedFeatureError,
-                         message_contains("undefined at sigma=0"));
+                         message_contains("Likelihood-ratio delta is undefined at sigma=0"));
+    CHECK_THROWS_MATCHES(ov.vega(kLikelihoodRatio),
+                         UnsupportedFeatureError,
+                         message_contains("Likelihood-ratio vega is undefined at sigma=0"));
+    CHECK_THROWS_MATCHES(ov.theta(kLikelihoodRatio),
+                         UnsupportedFeatureError,
+                         message_contains("Likelihood-ratio theta is undefined at sigma=0"));
+    CHECK_THROWS_MATCHES(ov.rho(kLikelihoodRatio),
+                         UnsupportedFeatureError,
+                         message_contains("Likelihood-ratio rho is undefined at sigma=0"));
 }
 
 TEST_CASE("discrete dividends reduce the MC call price", "[mc]") {

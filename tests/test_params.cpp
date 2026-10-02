@@ -15,6 +15,7 @@ TEST_CASE("default params validate", "[params]") {
     CHECK_NOTHROW(PdeParams{}.validate());
     CHECK(BinomialParams{}.num_steps == 500);
     CHECK(PdeParams{}.method == PdeMethod::CrankNicolson);
+    CHECK(PdeParams{}.smax_mult == 4.0);  // S_max scales every PDE price
     CHECK(MonteCarloParams{}.random_seed == 42ULL);
 }
 
@@ -29,6 +30,9 @@ TEST_CASE("MonteCarloParams validation", "[params]") {
                          ValidationError,
                          message_contains("min_itm must be >= 1"));
     CHECK_THROWS_MATCHES(MonteCarloParams{.std_error_warn_ratio = 0.0}.validate(),
+                         ValidationError,
+                         message_contains("std_error_warn_ratio must be > 0"));
+    CHECK_THROWS_MATCHES(MonteCarloParams{.std_error_warn_ratio = -0.1}.validate(),
                          ValidationError,
                          message_contains("std_error_warn_ratio must be > 0"));
     CHECK_NOTHROW(MonteCarloParams{.std_error_warn_ratio = std::nullopt}.validate());
@@ -91,6 +95,7 @@ TEST_CASE("PdeParams::for_barriers picks scheme from monitoring", "[params]") {
     CHECK(cont.spot_steps == 1200);
     CHECK(cont.time_steps == 800);
     CHECK(cont.american_solver == PdeEarlyExercise::GaussSeidel);
+    CHECK_FALSE(cont.control_variate_european);
 
     const auto disc = PdeParams::for_barriers(BarrierMonitoring::Discrete);
     CHECK(disc.method == PdeMethod::ExplicitHull);
