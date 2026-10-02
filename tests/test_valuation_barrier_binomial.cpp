@@ -80,41 +80,6 @@ constexpr GreekOptions kNumerical{.method = GreekCalculationMethod::Numerical};
 // Cross-engine agreement with the analytical closed forms
 // ---------------------------------------------------------------------------
 
-TEST_CASE("binomial barriers reproduce the Boyle-Tian (1998) Table 8 values",
-          "[barrier][binomial]") {
-    // Down-and-out call: S=100, K=100, H=95, sigma=0.20, r=10%, T=0.5y.
-    // Paper PVs and the rtol=0.013 tolerance mirror the Python suite, which
-    // runs the same table with the default engine parameters.
-    const DateTime maturity =
-        kPricingDate + std::chrono::hours{24 * 182} + std::chrono::hours{12};  // 182.5 days
-    const MarketData market(kPricingDate, DiscountCurve::flat(0.10, 2.0), "USD");
-    const UnderlyingData underlying(100.0, 0.20, market);
-    const auto make_spec = [&](std::optional<int> observations) {
-        return BarrierSpec({.option_type = OptionType::Call,
-                            .exercise_type = ExerciseType::European,
-                            .strike = 100.0,
-                            .maturity = maturity,
-                            .barrier = 95.0,
-                            .direction = BarrierDirection::Down,
-                            .action = BarrierAction::Out,
-                            .monitoring = observations.has_value() ? BarrierMonitoring::Discrete
-                                                                   : BarrierMonitoring::Continuous,
-                            .currency = "USD",
-                            .num_observations = observations});
-    };
-
-    struct PaperCase {
-        std::optional<int> observations;
-        double paper_pv = 0.0;
-    };
-    const std::array<PaperCase, 3> cases{{{std::nullopt, 5.7163}, {6, 7.3100}, {2, 7.9759}}};
-    for (const auto& c : cases) {
-        INFO("observations " << (c.observations.has_value() ? *c.observations : -1));
-        const OptionValuation ov(underlying, make_spec(c.observations), PricingMethod::Binomial);
-        CHECK_THAT(ov.present_value(), close_to(c.paper_pv, 0.013, 1e-4));
-    }
-}
-
 TEST_CASE("binomial barriers agree with the analytical engine", "[barrier][binomial]") {
     const auto type = GENERATE(OptionType::Call, OptionType::Put);
     const auto direction = GENERATE(BarrierDirection::Up, BarrierDirection::Down);

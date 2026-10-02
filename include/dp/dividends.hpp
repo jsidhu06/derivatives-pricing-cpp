@@ -12,7 +12,7 @@ namespace dp {
 /// A single cash dividend going ex on `ex_date`.
 struct Dividend {
     DateTime ex_date;
-    double amount;
+    double amount = 0.0;
 
     friend bool operator==(const Dividend&, const Dividend&) = default;
 };

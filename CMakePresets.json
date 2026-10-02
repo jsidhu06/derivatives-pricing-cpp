@@ -152,7 +152,12 @@
     {
       "name": "debug",
       "inherits": "base-test",
-      "configurePreset": "debug"
+      "configurePreset": "debug",
+      "filter": {
+        "exclude": {
+          "label": "^slow$"
+        }
+      }
     },
     {
       "name": "release",
@@ -167,7 +172,12 @@
     {
       "name": "ci-debug",
       "inherits": "base-test",
-      "configurePreset": "ci-debug"
+      "configurePreset": "ci-debug",
+      "filter": {
+        "exclude": {
+          "label": "^slow$"
+        }
+      }
     },
     {
       "name": "ci-release",
@@ -177,7 +187,12 @@
     {
       "name": "clang-debug",
       "inherits": "base-test",
-      "configurePreset": "clang-debug"
+      "configurePreset": "clang-debug",
+      "filter": {
+        "exclude": {
+          "label": "^slow$"
+        }
+      }
     },
     {
       "name": "clang-release",

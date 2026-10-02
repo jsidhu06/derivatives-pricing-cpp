@@ -68,45 +68,6 @@ OptionValuation pde(const UnderlyingData& underlying, BarrierSpec::Params params
 // Paper anchors and cross-engine agreement
 // ---------------------------------------------------------------------------
 
-TEST_CASE("PDE barriers reproduce the Boyle-Tian (1998) Table 8 values", "[barrier][pde]") {
-    // Down-and-out call: S=100, K=100, H=95, sigma=0.20, r=10%, T=0.5y.
-    // Paper PVs and per-frequency tolerances mirror the Python suite
-    // (PDE rtol 0.002, except the paper's likely-biased "hourly" row).
-    const DateTime maturity =
-        kPricingDate + std::chrono::hours{24 * 182} + std::chrono::hours{12};  // 182.5 days
-    const MarketData market(kPricingDate, DiscountCurve::flat(0.10, 2.0), "USD");
-    const UnderlyingData underlying(100.0, 0.20, market);
-    const auto make_spec = [&](std::optional<int> observations) {
-        return BarrierSpec({.option_type = OptionType::Call,
-                            .exercise_type = ExerciseType::European,
-                            .strike = 100.0,
-                            .maturity = maturity,
-                            .barrier = 95.0,
-                            .direction = BarrierDirection::Down,
-                            .action = BarrierAction::Out,
-                            .monitoring = observations.has_value() ? BarrierMonitoring::Discrete
-                                                                   : BarrierMonitoring::Continuous,
-                            .currency = "USD",
-                            .num_observations = observations});
-    };
-
-    struct PaperCase {
-        std::optional<int> observations;
-        double paper_pv = 0.0;
-        double rtol = 0.0;
-    };
-    const std::array<PaperCase, 5> cases{{{std::nullopt, 5.7163, 0.002},
-                                          {500, 5.8881, 0.020},  // paper's biased "hourly" row
-                                          {125, 6.1669, 0.002},
-                                          {26, 6.6176, 0.002},
-                                          {6, 7.3100, 0.002}}};
-    for (const auto& c : cases) {
-        INFO("observations " << (c.observations.has_value() ? *c.observations : -1));
-        const OptionValuation ov(underlying, make_spec(c.observations), PricingMethod::PdeFd);
-        CHECK_THAT(ov.present_value(), close_to(c.paper_pv, c.rtol, 1e-4));
-    }
-}
-
 TEST_CASE("PDE barriers agree with the analytical engine", "[barrier][pde]") {
     const auto type = GENERATE(OptionType::Call, OptionType::Put);
     const auto direction = GENERATE(BarrierDirection::Up, BarrierDirection::Down);

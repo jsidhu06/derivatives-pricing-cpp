@@ -24,3 +24,6 @@ practice/
 
 # Reference Python implementation (separate git repo, kept locally for porting)
 derivatives-pricing/
+
+# Personal reference notes
+TESTING.md

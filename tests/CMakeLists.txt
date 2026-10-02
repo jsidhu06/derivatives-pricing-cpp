@@ -2,6 +2,7 @@ include(Catch)
 
 add_executable(
     dp_tests
+    test_barrier_papers.cpp
     test_contracts.cpp
     test_dates.cpp
     test_diagnostics.cpp
@@ -30,4 +31,5 @@ target_include_directories(dp_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 dp_set_project_warnings(dp_tests)
 dp_enable_clang_tidy(dp_tests)
 
-catch_discover_tests(dp_tests)
+# Tags become ctest labels so presets can filter on them (e.g. [slow]).
+catch_discover_tests(dp_tests ADD_TAGS_AS_LABELS)
