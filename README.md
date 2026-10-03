@@ -104,9 +104,9 @@ Presets: `debug`, `release`, `relwithdebinfo`, `tidy` (clang-tidy on every TU),
 cmake --workflow --preset clang-debug
 ```
 
-Tests tagged `[slow]` (the heavier paper tables) take minutes under the
-sanitizer build, so the debug test presets skip them; release presets run
-everything. To run them in a debug build anyway:
+Tests tagged `[slow]` (the heavier paper tables and Monte Carlo cross-checks)
+take minutes under the sanitizer build, so the debug test presets skip them;
+release presets run everything. To run them in a debug build anyway:
 `build/debug/tests/dp_tests "[slow]"`.
 
 ### Tooling

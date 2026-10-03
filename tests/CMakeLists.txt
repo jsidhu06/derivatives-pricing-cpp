@@ -8,11 +8,13 @@ add_executable(
     test_diagnostics.cpp
     test_discount_curve.cpp
     test_dividends_forward.cpp
+    test_engine_extremes.cpp
     test_enums.cpp
     test_implied_volatility.cpp
     test_market_data.cpp
     test_normal.cpp
     test_params.cpp
+    test_payoff_cross_engine.cpp
     test_simulation_mechanics.cpp
     test_simulation_processes.cpp
     test_underlying.cpp
