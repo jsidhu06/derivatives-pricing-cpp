@@ -15,10 +15,13 @@
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include <array>
+#include <chrono>
 #include <cmath>
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 using namespace dp;
 using dp::test::close_to;
@@ -236,5 +239,226 @@ TEST_CASE("MC barrier process and greek policy", "[barrier][mc]") {
             OptionValuation(gbm(20'000, 12), BarrierSpec(params), PricingMethod::MonteCarlo, cv)
                 .present_value();
         CHECK(std::isfinite(pv));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Rebates
+// ---------------------------------------------------------------------------
+
+TEST_CASE("continuous MC rebate legs agree with the closed form", "[barrier][mc][rebate]") {
+    struct Case {
+        const char* id;
+        BarrierAction action;
+        RebateTiming timing;
+    };
+    // Knock-in rebates are paid at expiry by contract.
+    for (const Case c : {Case{"KO at-hit", BarrierAction::Out, RebateTiming::AtHit},
+                         Case{"KO at-expiry", BarrierAction::Out, RebateTiming::AtExpiry},
+                         Case{"KI at-expiry", BarrierAction::In, RebateTiming::AtExpiry}}) {
+        INFO(c.id);
+        auto params = base_params(115.0, BarrierDirection::Up, c.action);
+        params.rebate = 3.0;
+        params.rebate_timing = c.timing;
+        const double mc =
+            OptionValuation(gbm(), BarrierSpec(params), PricingMethod::MonteCarlo).present_value();
+        // The bridge discounts an intra-step hit to the step midpoint.
+        CHECK_THAT(mc, close_to(analytic_pv(params), 1.5e-2, 5e-3));
+    }
+}
+
+TEST_CASE("discrete MC rebate legs agree with the binomial engine", "[barrier][mc][rebate]") {
+    const UnderlyingData ud(100.0, 0.25, md());
+    for (const auto timing : {RebateTiming::AtHit, RebateTiming::AtExpiry}) {
+        INFO(to_string(timing));
+        auto params = base_params(90.0, BarrierDirection::Down, BarrierAction::Out);
+        params.monitoring = BarrierMonitoring::Discrete;
+        params.num_observations = 12;
+        params.rebate = 2.0;
+        params.rebate_timing = timing;
+        const double mc =
+            OptionValuation(gbm(), BarrierSpec(params), PricingMethod::MonteCarlo).present_value();
+        const double tree =
+            OptionValuation(ud, BarrierSpec(params), PricingMethod::Binomial).present_value();
+        CHECK_THAT(mc, close_to(tree, 2.5e-2, 5e-3));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Explicit monitoring dates
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// Weekly observation dates after `from`, through maturity.
+std::vector<DateTime> weekly_dates(DateTime from) {
+    std::vector<DateTime> dates;
+    for (DateTime d = from + std::chrono::days{7}; d < kMaturity; d += std::chrono::days{7}) {
+        dates.push_back(d);
+    }
+    dates.push_back(kMaturity);
+    return dates;
+}
+
+}  // namespace
+
+TEST_CASE("MC honours explicit monitoring dates", "[barrier][mc][monitoring]") {
+    SECTION("weekly dates agree with the binomial engine") {
+        auto params = base_params(85.0, BarrierDirection::Down, BarrierAction::In, OptionType::Put);
+        params.monitoring = BarrierMonitoring::Discrete;
+        params.monitoring_dates = weekly_dates(kPricingDate);
+        const double mc =
+            OptionValuation(gbm(), BarrierSpec(params), PricingMethod::MonteCarlo).present_value();
+        const double tree =
+            OptionValuation(
+                UnderlyingData(100.0, 0.25, md()), BarrierSpec(params), PricingMethod::Binomial)
+                .present_value();
+        CHECK_THAT(mc, close_to(tree, 2.5e-2, 5e-3));
+    }
+
+    SECTION("observing on the pricing date triggers a knock-in at inception") {
+        // Spot 100 already sits below a down barrier at 101. With the pricing
+        // date among the monitoring dates the barrier is hit at inception,
+        // so the knock-in is the vanilla — on identical paths, exactly.
+        std::vector<DateTime> dates = weekly_dates(kPricingDate);
+        dates.insert(dates.begin(), kPricingDate);
+        auto params =
+            base_params(101.0, BarrierDirection::Down, BarrierAction::In, OptionType::Put);
+        params.monitoring = BarrierMonitoring::Discrete;
+        params.monitoring_dates = dates;
+        const GbmProcess process = gbm(20'000).with_observation_dates(dates);
+        const double ki = OptionValuation(process, BarrierSpec(params), PricingMethod::MonteCarlo)
+                              .present_value();
+        const double vanilla = OptionValuation(process,
+                                               VanillaSpec({.option_type = OptionType::Put,
+                                                            .exercise_type = ExerciseType::European,
+                                                            .strike = 100.0,
+                                                            .maturity = kMaturity,
+                                                            .currency = "USD"}),
+                                               PricingMethod::MonteCarlo)
+                                   .present_value();
+        CHECK_THAT(ki, close_to(vanilla, 1e-12, 1e-14));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// LSM barrier basis, American accuracy and Greeks (heavier; [slow])
+// ---------------------------------------------------------------------------
+
+TEST_CASE("the plain Laguerre basis stays close to the barrier-aware basis",
+          "[barrier][mc][american]") {
+    const auto params = base_params(
+        115.0, BarrierDirection::Up, BarrierAction::Out, OptionType::Put, ExerciseType::American);
+    const auto pv = [&](bool aware) {
+        return OptionValuation(gbm(50'000),
+                               BarrierSpec(params),
+                               PricingMethod::MonteCarlo,
+                               MonteCarloParams{.barrier_aware_basis = aware})
+            .present_value();
+    };
+    CHECK_THAT(pv(false), close_to(pv(true), 5e-2, 0.0));
+}
+
+TEST_CASE("American MC barriers track the PDE engine on regular cases",
+          "[barrier][mc][american][slow]") {
+    // Regular cases only: down-and-out puts and up-and-out calls carry a
+    // known LSM downward bias (the engine warns). 50k paths / 200 steps:
+    // observed gaps 0.3-0.4% (no bias across seeds, noise 0.4-0.8%), so 2%
+    // absorbs seed noise without masking a bias regression.
+    struct Case {
+        const char* id = nullptr;
+        OptionType type = OptionType::Call;
+        BarrierDirection direction = BarrierDirection::Up;
+        BarrierAction action = BarrierAction::Out;
+        double barrier = 0.0;
+        std::optional<int> observations;
+        bool weekly = false;
+    };
+    const std::array<Case, 4> cases{{
+        {"DOC continuous",
+         OptionType::Call,
+         BarrierDirection::Down,
+         BarrierAction::Out,
+         85.0,
+         std::nullopt,
+         false},
+        {"UIC continuous",
+         OptionType::Call,
+         BarrierDirection::Up,
+         BarrierAction::In,
+         115.0,
+         std::nullopt,
+         false},
+        {"UOP discrete M=50",
+         OptionType::Put,
+         BarrierDirection::Up,
+         BarrierAction::Out,
+         115.0,
+         50,
+         false},
+        {"DIP discrete weekly",
+         OptionType::Put,
+         BarrierDirection::Down,
+         BarrierAction::In,
+         85.0,
+         std::nullopt,
+         true},
+    }};
+    for (const auto& c : cases) {
+        INFO(c.id);
+        auto params = base_params(c.barrier, c.direction, c.action, c.type, ExerciseType::American);
+        if (c.observations.has_value() || c.weekly) {
+            params.monitoring = BarrierMonitoring::Discrete;
+            params.num_observations = c.observations;
+            if (c.weekly) {
+                params.monitoring_dates = weekly_dates(kPricingDate);
+            }
+        }
+        const double mc =
+            OptionValuation(gbm(50'000, 200), BarrierSpec(params), PricingMethod::MonteCarlo)
+                .present_value();
+        const double pde =
+            OptionValuation(
+                UnderlyingData(100.0, 0.25, md()), BarrierSpec(params), PricingMethod::PdeFd)
+                .present_value();
+        CHECK_THAT(mc, close_to(pde, 2e-2, 1e-4));
+    }
+}
+
+TEST_CASE("European MC barrier Greeks agree with the closed form", "[barrier][mc][greeks][slow]") {
+    // Bump-and-revalue on 100k common-random-number paths (100 steps; the
+    // Brownian bridge removes the monitoring bias) vs the closed form, at
+    // the Python suite's tolerances. Gamma is blocked on MC barriers.
+    struct Case {
+        BarrierDirection direction;
+        BarrierAction action;
+        OptionType type;
+        double barrier;
+    };
+    const std::array<Case, 4> cases{
+        {{BarrierDirection::Down, BarrierAction::Out, OptionType::Call, 85.0},
+         {BarrierDirection::Down, BarrierAction::In, OptionType::Put, 85.0},
+         {BarrierDirection::Up, BarrierAction::Out, OptionType::Put, 120.0},
+         {BarrierDirection::Up, BarrierAction::In, OptionType::Call, 120.0}}};
+    using Greek = double (OptionValuation::*)(GreekOptions) const;
+    struct GreekTol {
+        const char* name;
+        Greek greek;
+        double rtol;
+    };
+    const std::array<GreekTol, 4> greeks{{{"delta", &OptionValuation::delta, 0.05},
+                                          {"vega", &OptionValuation::vega, 0.10},
+                                          {"theta", &OptionValuation::theta, 0.10},
+                                          {"rho", &OptionValuation::rho, 0.05}}};
+    for (const auto& c : cases) {
+        const auto params = base_params(c.barrier, c.direction, c.action, c.type);
+        const OptionValuation mc(gbm(100'000, 100), BarrierSpec(params), PricingMethod::MonteCarlo);
+        const OptionValuation bsm(
+            UnderlyingData(100.0, 0.25, md()), BarrierSpec(params), PricingMethod::Bsm);
+        for (const auto& g : greeks) {
+            INFO(to_string(c.direction)
+                 << "-" << to_string(c.action) << " " << to_string(c.type) << " " << g.name);
+            CHECK_THAT((mc.*g.greek)({}), close_to((bsm.*g.greek)({}), g.rtol, 5e-3));
+        }
     }
 }

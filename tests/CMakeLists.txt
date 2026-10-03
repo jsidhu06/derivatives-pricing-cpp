@@ -13,6 +13,7 @@ add_executable(
     test_market_data.cpp
     test_normal.cpp
     test_params.cpp
+    test_simulation_mechanics.cpp
     test_simulation_processes.cpp
     test_underlying.cpp
     test_valuation_barrier.cpp
