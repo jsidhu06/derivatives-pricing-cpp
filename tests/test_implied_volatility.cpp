@@ -20,6 +20,7 @@
 #include <cmath>
 #include <cstring>
 #include <optional>
+#include <span>
 #include <utility>
 
 using namespace dp;
@@ -126,7 +127,7 @@ ImpliedVolMethod solver_of(const char* code) {
 }  // namespace
 
 TEST_CASE("implied vol matches the Python reference implementation", "[implied_vol][golden]") {
-    for (const auto& row : kImpliedVolGolden) {
+    for (const auto& row : std::span(kImpliedVolGolden)) {
         INFO("row " << row.label);
         const auto result = implied_volatility(
             row.target_price, replay(row, 0.2), {.method = solver_of(row.solver), .max_iter = 200});

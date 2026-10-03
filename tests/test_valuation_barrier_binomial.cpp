@@ -18,6 +18,7 @@
 #include <chrono>
 #include <cmath>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -312,7 +313,7 @@ OptionValuation replay(const BinomialBarrierGoldenRow& row) {
 
 TEST_CASE("binomial barriers match the Python reference implementation",
           "[barrier][binomial][golden]") {
-    for (const auto& row : kBinomialBarrierGolden) {
+    for (const auto& row : std::span(kBinomialBarrierGolden)) {
         INFO("row " << row.label);
         const auto ov = replay(row);
         CHECK_THAT(ov.present_value(), close_to(row.pv, 1e-10, 1e-12));

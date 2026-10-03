@@ -24,6 +24,7 @@
 #include <cstring>
 #include <functional>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string_view>
 #include <utility>
@@ -193,7 +194,7 @@ std::pair<double, double> tolerance(const char* engine) {
 
 TEST_CASE("market conventions match the Python reference implementation",
           "[valuation][conventions][golden]") {
-    for (const auto& row : kConventionsGolden) {
+    for (const auto& row : std::span(kConventionsGolden)) {
         INFO("row " << row.label);
         if (!row.pv.has_value()) {
             // The whole valuation is refused (e.g. a tree on 30/360).

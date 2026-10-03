@@ -18,6 +18,7 @@
 #include <chrono>
 #include <cmath>
 #include <optional>
+#include <span>
 #include <utility>
 
 using namespace dp;
@@ -264,7 +265,7 @@ constexpr GreekOptions kNumerical{.method = GreekCalculationMethod::Numerical};
 // the barrier paper tables.
 TEST_CASE("PDE barriers match the Python reference implementation",
           "[barrier][pde][golden][slow]") {
-    for (const auto& row : kPdeBarrierGolden) {
+    for (const auto& row : std::span(kPdeBarrierGolden)) {
         INFO("row " << row.label);
         const auto ov = replay(row);
         // Same parity tolerances as the vanilla PDE golden table: the

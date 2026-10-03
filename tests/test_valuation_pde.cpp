@@ -17,6 +17,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <span>
 
 using namespace dp;
 using Catch::Matchers::WithinAbs;
@@ -377,7 +378,7 @@ OptionValuation replay(const PdeGoldenRow& row) {
 }  // namespace
 
 TEST_CASE("PDE matches the Python reference implementation", "[pde][golden]") {
-    for (const auto& row : kPdeGolden) {
+    for (const auto& row : std::span(kPdeGolden)) {
         INFO("row " << row.label);
         const auto ov = replay(row);
         CHECK_THAT(ov.present_value(), close_to(row.pv, 1e-9, 1e-11));

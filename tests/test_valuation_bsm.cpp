@@ -15,6 +15,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <span>
 #include <string>
 
 using namespace dp;
@@ -318,7 +319,7 @@ OptionValuation replay(const BsmGoldenRow& row) {
 
 TEST_CASE("BSM matches the Python reference implementation", "[bsm][golden]") {
     const dp::test::WarningCapture capture;  // rate bumps can go negative on r=0 rows
-    for (const auto& row : kBsmGolden) {
+    for (const auto& row : std::span(kBsmGolden)) {
         INFO("row " << row.label);
         const auto ov = replay(row);
         CHECK_THAT(ov.present_value(), close_to(row.pv, 1e-11, 1e-13));

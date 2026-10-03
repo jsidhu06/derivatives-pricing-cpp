@@ -16,6 +16,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <span>
 
 using namespace dp;
 using Catch::Matchers::WithinAbs;
@@ -379,7 +380,7 @@ OptionValuation replay(const BinomialGoldenRow& row) {
 }  // namespace
 
 TEST_CASE("binomial matches the Python reference implementation", "[binomial][golden]") {
-    for (const auto& row : kBinomialGolden) {
+    for (const auto& row : std::span(kBinomialGolden)) {
         INFO("row " << row.label);
         const auto ov = replay(row);
         CHECK_THAT(ov.present_value(), close_to(row.pv, 1e-10, 1e-12));
