@@ -22,6 +22,7 @@ add_executable(
     test_valuation_barrier_triggered.cpp
     test_valuation_binomial.cpp
     test_valuation_bsm.cpp
+    test_valuation_conventions.cpp
     test_valuation_facade.cpp
     test_valuation_mc.cpp
     test_valuation_pde.cpp
