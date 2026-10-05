@@ -62,8 +62,9 @@ void BinomialParams::validate() const {
 }
 
 void PdeParams::validate() const {
-    if (smax_mult <= 0.0) {
-        throw ValidationError(std::format("smax_mult must be positive, got {}", smax_mult));
+    if (smax_mult.has_value() && !(*smax_mult > 1.0)) {
+        throw ValidationError(
+            std::format("smax_mult must be > 1 (or unset for auto), got {}", *smax_mult));
     }
     if (spot_steps < 3) {
         throw ValidationError(std::format("spot_steps must be >= 3, got {}", spot_steps));

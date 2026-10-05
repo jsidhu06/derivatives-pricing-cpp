@@ -59,8 +59,6 @@ namespace {
 /// spot_steps directly.
 SpaceGridBuild build_ko_continuous_log_grid(double smin_target,
                                             double smax_target,
-                                            double ref_price,
-                                            double smax_mult,
                                             BarrierDirection direction,
                                             double volatility,
                                             double time_to_maturity,
@@ -82,7 +80,7 @@ SpaceGridBuild build_ko_continuous_log_grid(double smin_target,
         }
     } else {
         zhi = std::log(smax_target);
-        zlo = std::log(std::max(ref_price / smax_mult, 1.0e-8));
+        zlo = std::log(smin_target);
         if (explicit_scheme) {
             const double dz_hull = volatility * std::sqrt(3.0 * (time_to_maturity / time_steps));
             const double grid_width = spot_steps * dz_hull;
@@ -294,7 +292,14 @@ PdeBarrierEngine::european_ki_components() const {
         // The vanilla leg reads the barrier spec's strike/type through the
         // shared state accessors, so `compute_vanilla` doubles as the
         // reference `_fd_core` call (European by construction here).
-        ki_components_.emplace(compute_barrier_knock_out(), compute_vanilla());
+        // The vanilla leg is solved over the barrier's far-field targets
+        // (pde::barrier_domain), so its far field is widened whenever the
+        // knock-out's is and its span covers the knock-out's nodes (up to one
+        // cell of anchoring slack). The grids still differ: the knock-out is
+        // truncated at a continuous barrier and anchored on the barrier for
+        // discrete monitoring, so vanilla values are interpolated onto the
+        // knock-out nodes.
+        ki_components_.emplace(compute_barrier_knock_out(), compute_vanilla(far_field_domain()));
     }
     return *ki_components_;
 }
@@ -328,6 +333,11 @@ double PdeBarrierEngine::discounted_rebate_theta(double last_dtau) const {
     const double current_value = spec.rebate() * curve.df(ttm);
     const double previous_value = spec.rebate() * curve.df(std::max(ttm - last_dtau, 0.0));
     return (previous_value - current_value) / last_dtau / kDaysPerYear;
+}
+
+pde::Domain PdeBarrierEngine::far_field_domain() const {
+    return pde::barrier_domain(
+        state_, spec().strike(), pde::log_forward(state_), pde_params(state_));
 }
 
 const PdeEngine& PdeBarrierEngine::vanilla_equivalent_engine() const {
@@ -371,16 +381,20 @@ PdeEngine::Solution PdeBarrierEngine::compute_barrier_knock_out() const {
     // For continuous KO the grid is truncated at the barrier (the barrier
     // becomes a boundary node); discrete KO uses the full grid with the
     // barrier anchored half a cell between nodes.
+    // Far-field targets from pde::barrier_domain. Its Spot-grid lower edge is
+    // 0 (the legacy floor of the discrete/KI full grids); a continuously
+    // monitored up-barrier Spot grid keeps its legacy floor max(S, K) / smax_mult.
+    const pde::Domain domain = far_field_domain();
+    const auto [far_lo, far_hi] = domain;
+    const double smax_mult = pde::resolved_smax_mult(params);
+    const double up_floor = far_lo > 0.0 ? far_lo : std::max(ref_price / smax_mult, 1.0e-8);
     SpaceGridBuild built;
     if (params.space_grid == PdeSpaceGrid::LogSpot) {
         if (continuous) {
-            const double smin_target =
-                is_up ? std::max(ref_price / params.smax_mult, 1.0e-8) : barrier;
-            const double smax_target = is_up ? barrier : params.smax_mult * ref_price;
+            const double smin_target = is_up ? up_floor : barrier;
+            const double smax_target = is_up ? barrier : far_hi;
             built = build_ko_continuous_log_grid(smin_target,
                                                  smax_target,
-                                                 ref_price,
-                                                 params.smax_mult,
                                                  spec.direction(),
                                                  volatility,
                                                  ttm,
@@ -392,27 +406,35 @@ PdeEngine::Solution PdeBarrierEngine::compute_barrier_knock_out() const {
                                    strike,
                                    ttm,
                                    volatility,
-                                   params.smax_mult,
+                                   smax_mult,
                                    m_steps,
                                    params.time_steps,
                                    params.method,
                                    barrier,
-                                   /*anchor_half_step=*/true);
+                                   /*anchor_half_step=*/true,
+                                   domain);
         }
     } else {
         if (continuous) {
-            const double smin_target =
-                is_up ? std::max(ref_price / params.smax_mult, 1.0e-8) : barrier;
-            const double smax_target = is_up ? barrier : params.smax_mult * ref_price;
+            const double smin_target = is_up ? up_floor : barrier;
+            const double smax_target = is_up ? barrier : far_hi;
             built = build_spot_grid(smin_target, smax_target, m_steps);
         } else {
-            built = build_spot_grid(
-                0.0, params.smax_mult * ref_price, m_steps, barrier, /*anchor_half_step=*/true);
+            built = build_spot_grid(0.0, far_hi, m_steps, barrier, /*anchor_half_step=*/true);
         }
     }
     const ArrayXd grid = std::move(built.grid);
     const ArrayXd S = std::move(built.spots);
     const double dx = built.dx;
+    pde::warn_if_under_resolved(spot, dx, ttm, volatility, params.space_grid);
+    // Far-field sides only: a continuously monitored barrier is an exact boundary.
+    pde::warn_if_domain_truncated(
+        continuous && !is_up ? std::nullopt : std::optional<double>(S[0]),
+        continuous && is_up ? std::nullopt : std::optional<double>(S[S.size() - 1]),
+        spot,
+        pde::log_forward(state_),
+        ttm,
+        volatility);
     const double smin = S[0];
     const double smax = S[S.size() - 1];
 
@@ -635,6 +657,7 @@ PdeEngine::Solution PdeBarrierEngine::compute_barrier_knock_out() const {
 }
 
 PdeEngine::Solution PdeBarrierEngine::compute_barrier_knock_in() const {
+    const pde::Domain domain = far_field_domain();
     const PdeParams& params = pde_params(state_);
     const auto& spec = std::get<BarrierSpec>(state_.spec);
     const bool early = state_.exercise_type() == ExerciseType::American;
@@ -655,7 +678,6 @@ PdeEngine::Solution PdeBarrierEngine::compute_barrier_knock_in() const {
 
     const std::vector<double> monitoring_taus = barrier_monitoring_taus();
     const int m_steps = params.spot_steps;
-    const double ref_price = std::max(spot, strike);
 
     // Full (untruncated) grid, anchored on the barrier: on a node for
     // continuous coupling, half a cell off for discrete monitoring.
@@ -665,22 +687,23 @@ PdeEngine::Solution PdeBarrierEngine::compute_barrier_knock_in() const {
                                strike,
                                ttm,
                                volatility,
-                               params.smax_mult,
+                               pde::resolved_smax_mult(params),
                                m_steps,
                                params.time_steps,
                                params.method,
                                barrier,
-                               /*anchor_half_step=*/!continuous);
+                               /*anchor_half_step=*/!continuous,
+                               domain);
     } else {
-        built = build_spot_grid(0.0,
-                                params.smax_mult * ref_price,
-                                m_steps,
-                                barrier,
-                                /*anchor_half_step=*/!continuous);
+        built =
+            build_spot_grid(0.0, domain.second, m_steps, barrier, /*anchor_half_step=*/!continuous);
     }
     const ArrayXd grid = std::move(built.grid);
     const ArrayXd S = std::move(built.spots);
     const double dx = built.dx;
+    pde::warn_if_under_resolved(spot, dx, ttm, volatility, params.space_grid);
+    pde::warn_if_domain_truncated(
+        S[0], S[S.size() - 1], spot, pde::log_forward(state_), ttm, volatility);
     const double smin = S[0];
     const double smax = S[S.size() - 1];
 

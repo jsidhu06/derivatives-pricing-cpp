@@ -15,7 +15,7 @@ TEST_CASE("default params validate", "[params]") {
     CHECK_NOTHROW(PdeParams{}.validate());
     CHECK(BinomialParams{}.num_steps == 500);
     CHECK(PdeParams{}.method == PdeMethod::CrankNicolson);
-    CHECK(PdeParams{}.smax_mult == 4.0);  // S_max scales every PDE price
+    CHECK_FALSE(PdeParams{}.smax_mult.has_value());  // auto domain from sigma*sqrt(T)
     CHECK(MonteCarloParams{}.random_seed == 42ULL);
 }
 
@@ -62,9 +62,13 @@ TEST_CASE("BinomialParams warns on poor Asian average ratio", "[params]") {
 }
 
 TEST_CASE("PdeParams validation", "[params]") {
-    CHECK_THROWS_MATCHES(PdeParams{.smax_mult = 0.0}.validate(),
-                         ValidationError,
-                         message_contains("smax_mult must be positive"));
+    // <= 1 would give a domain that need not contain the spot.
+    for (const double smax_mult : {0.0, -1.0, 0.5, 1.0}) {
+        CHECK_THROWS_MATCHES(PdeParams{.smax_mult = smax_mult}.validate(),
+                             ValidationError,
+                             message_contains("smax_mult must be > 1"));
+    }
+    CHECK_NOTHROW(PdeParams{.smax_mult = 6.0}.validate());
     CHECK_THROWS_MATCHES(PdeParams{.spot_steps = 2}.validate(),
                          ValidationError,
                          message_contains("spot_steps must be >= 3"));

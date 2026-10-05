@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cmath>
 #include <format>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -277,18 +278,127 @@ std::pair<double, double> boundary_values(std::optional<OptionType> option_type,
     if (!strike.has_value()) {
         throw ConfigurationError("vanilla PDE boundary values require a strike");
     }
+    // Forward-intrinsic asymptote max(+/-(S dq - K df), 0) at each boundary:
+    // exact when the boundary is far (in sigma*sqrt(T) units) from the strike
+    // on either side, so it also holds when the strike lies outside the
+    // domain (the auto vanilla domain need not contain it). On the legacy
+    // domains it reduces to the classic put 0 above / call 0 below.
     const double k = *strike;
-    if (option_type == OptionType::Put) {
-        const double intrinsic = std::max(k - smin, 0.0);
-        const double continuation = k * df_fwd - smin * dq_fwd;
-        const double left = early_exercise ? std::max(continuation, intrinsic) : continuation;
-        return {left, 0.0};
+    const double sign = option_type == OptionType::Call ? 1.0 : -1.0;
+    const auto boundary = [&](double s_b) {
+        const double continuation = std::max(sign * (s_b * dq_fwd - k * df_fwd), 0.0);
+        return early_exercise ? std::max(continuation, std::max(sign * (s_b - k), 0.0))
+                              : continuation;
+    };
+    return {boundary(smin), boundary(smax)};
+}
+
+namespace {
+
+/// Auto domain margin (and widened barrier far sides) in standard
+/// deviations of ln(S_T) around the spot and forward.
+constexpr double kDomainNumStd = 6.0;
+/// Boundaries closer than this (standard deviations) warn; barrier far
+/// sides closer than this are widened (LogSpot, auto).
+constexpr double kMinDomainNumStd = 3.0;
+/// Warn below this many grid nodes per standard deviation at the spot.
+constexpr double kMinNodesPerStd = 3.0;
+
+}  // namespace
+
+double log_forward(const detail::ValuationState& state) {
+    const double spot = state.underlying.initial_value();
+    const double ttm = state.maturity_year_fraction();
+    const auto& curve = state.discount_curve();
+    const auto& q_curve = state.underlying.dividend_curve();
+    const double df_r = curve.df(ttm);
+    const double df_q = q_curve.has_value() ? q_curve->df(ttm) : 1.0;
+    double pv_divs = 0.0;
+    for (const auto& [tau, amount] : dividend_tau_schedule(state)) {
+        pv_divs += amount * curve.df(std::max(ttm - tau, 0.0));
     }
-    const double continuation = smax * dq_fwd - k * df_fwd;
-    const double intrinsic = std::max(smax - k, 0.0);
-    const double right =
-        early_exercise ? std::max(continuation, intrinsic) : std::max(continuation, 0.0);
-    return {0.0, right};
+    return std::log(std::max(spot - pv_divs, 1.0e-8 * spot) * df_q / df_r);
+}
+
+Domain fitted_vanilla_domain(const detail::ValuationState& state,
+                             double strike,
+                             double log_fwd,
+                             PdeSpaceGrid space_grid) {
+    const double spot = state.underlying.initial_value();
+    const double sd = state.underlying.volatility() * std::sqrt(state.maturity_year_fraction());
+    const double log_spot = std::log(spot);
+    const double smin = std::exp(std::min(log_spot, log_fwd) - (kDomainNumStd * sd));
+    double smax = std::exp(std::max(log_spot, log_fwd) + (kDomainNumStd * sd));
+    if (space_grid == PdeSpaceGrid::Spot) {
+        smax = std::min(smax, kDefaultSmaxMult * std::max(spot, strike));
+    }
+    return {smin, smax};
+}
+
+Domain barrier_domain(const detail::ValuationState& state,
+                      double strike,
+                      double log_fwd,
+                      const PdeParams& params) {
+    const double spot = state.underlying.initial_value();
+    const double mult = resolved_smax_mult(params);
+    const double ref = std::max(spot, strike);
+    double smax = mult * ref;
+    double smin = params.space_grid == PdeSpaceGrid::Spot ? 0.0 : std::max(ref / mult, 1.0e-8);
+    if (!params.smax_mult.has_value() && params.space_grid == PdeSpaceGrid::LogSpot) {
+        const double sd = state.underlying.volatility() * std::sqrt(state.maturity_year_fraction());
+        const double centre_lo = std::min(std::log(spot), log_fwd);
+        const double centre_hi = std::max(std::log(spot), log_fwd);
+        if (centre_lo - std::log(smin) < kMinDomainNumStd * sd) {
+            smin = std::exp(centre_lo - (kDomainNumStd * sd));
+        }
+        if (std::log(smax) - centre_hi < kMinDomainNumStd * sd) {
+            smax = std::exp(centre_hi + (kDomainNumStd * sd));
+        }
+    }
+    return {smin, smax};
+}
+
+void warn_if_domain_truncated(std::optional<double> smin,
+                              std::optional<double> smax,
+                              double spot,
+                              double log_fwd,
+                              double time_to_maturity,
+                              double volatility) {
+    const double sd = volatility * std::sqrt(time_to_maturity);
+    double reach = std::numeric_limits<double>::infinity();
+    if (smin.has_value() && *smin > 0.0) {
+        reach = std::min(reach, (std::min(std::log(spot), log_fwd) - std::log(*smin)) / sd);
+    }
+    if (smax.has_value()) {
+        reach = std::min(reach, (std::log(*smax) - std::max(std::log(spot), log_fwd)) / sd);
+    }
+    if (reach < kMinDomainNumStd) {
+        warn(std::format(
+            "PDE domain boundary is {:.2g} standard deviations of ln(S_T) (sigma*sqrt(T) = "
+            "{:.3g}) from the spot/forward; the price is biased by the far-field boundary "
+            "condition. Leave smax_mult unset with the LOG_SPOT grid (auto domain) or "
+            "increase smax_mult.",
+            reach,
+            sd));
+    }
+}
+
+void warn_if_under_resolved(double spot,
+                            double spacing,
+                            double time_to_maturity,
+                            double volatility,
+                            PdeSpaceGrid space_grid) {
+    const double sd = volatility * std::sqrt(time_to_maturity);
+    const double nodes_per_std =
+        space_grid == PdeSpaceGrid::LogSpot ? sd / spacing : spot * sd / spacing;
+    if (nodes_per_std < kMinNodesPerStd) {
+        warn(std::format(
+            "PDE grid has {:.2g} nodes per standard deviation of ln(S_T) (sigma*sqrt(T) = "
+            "{:.3g}); the price is unreliable. Increase spot_steps or narrow the domain "
+            "(smax_mult).",
+            nodes_per_std,
+            sd));
+    }
 }
 
 SpaceGridBuild build_log_grid(double spot,
@@ -300,12 +410,13 @@ SpaceGridBuild build_log_grid(double spot,
                               int time_steps,
                               PdeMethod method,
                               std::optional<double> anchor_spot,
-                              bool anchor_half_step) {
+                              bool anchor_half_step,
+                              std::optional<Domain> domain) {
     if (anchor_half_step && !anchor_spot.has_value()) {
         throw ValidationError("anchor_half_step requires anchor_spot to be provided");
     }
-    const double smax = smax_mult * std::max(spot, strike);
-    const double smin = std::max(std::max(spot, strike) / smax_mult, 1.0e-8);
+    const auto [smin, smax] = domain.value_or(Domain{
+        std::max(std::max(spot, strike) / smax_mult, 1.0e-8), smax_mult * std::max(spot, strike)});
     const double zmin_target = std::log(smin);
     const double zmax_target = std::log(smax);
 

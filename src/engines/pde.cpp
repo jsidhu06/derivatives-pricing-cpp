@@ -62,10 +62,21 @@ const PdeEngine::Solution& PdeEngine::solution() const {
 }
 
 PdeEngine::Solution PdeEngine::compute_solution() const {
-    return compute_vanilla();
+    // smax_mult unset: vanillas get the domain sized to sigma*sqrt(T); custom
+    // payoffs keep the legacy span (their affine boundary models are fitted
+    // to the payoff wings). An explicit smax_mult is the legacy domain.
+    const PdeParams& params = pde_params(state_);
+    std::optional<pde::Domain> domain;
+    if (const std::optional<double> strike = state_.strike();
+        !params.smax_mult.has_value() && strike.has_value() &&
+        !std::holds_alternative<PayoffSpec>(state_.spec)) {
+        domain = pde::fitted_vanilla_domain(
+            state_, *strike, pde::log_forward(state_), params.space_grid);
+    }
+    return compute_vanilla(domain);
 }
 
-PdeEngine::Solution PdeEngine::compute_vanilla() const {
+PdeEngine::Solution PdeEngine::compute_vanilla(std::optional<pde::Domain> domain) const {
     const PdeParams& params = pde_params(state_);
     const bool early = state_.exercise_type() == ExerciseType::American;
     const auto* custom = std::get_if<PayoffSpec>(&state_.spec);
@@ -81,27 +92,34 @@ PdeEngine::Solution PdeEngine::compute_vanilla() const {
     const int m_steps = params.spot_steps;
     const double ref_price = strike.has_value() ? std::max(spot, *strike) : spot;
 
+    const double smax_mult = pde::resolved_smax_mult(params);
     ArrayXd grid;
     ArrayXd S;
     double dx = 0.0;
     if (params.space_grid == PdeSpaceGrid::Spot) {
-        const double smax = params.smax_mult * ref_price;
-        grid = linspace(0.0, smax, m_steps);
+        const auto [lo, hi] = domain.value_or(pde::Domain{0.0, smax_mult * ref_price});
+        grid = linspace(lo, hi, m_steps);
         S = grid;
-        dx = smax / m_steps;
+        dx = (hi - lo) / m_steps;
     } else {
         auto built = build_log_grid(spot,
                                     strike.value_or(spot),
                                     ttm,
                                     volatility,
-                                    params.smax_mult,
+                                    smax_mult,
                                     m_steps,
                                     params.time_steps,
-                                    params.method);
+                                    params.method,
+                                    std::nullopt,
+                                    false,
+                                    domain);
         grid = std::move(built.grid);
         S = std::move(built.spots);
         dx = built.dx;
     }
+    pde::warn_if_under_resolved(spot, dx, ttm, volatility, params.space_grid);
+    pde::warn_if_domain_truncated(
+        S[0], S[S.size() - 1], spot, pde::log_forward(state_), ttm, volatility);
     const double smin = S[0];
     const double smax = S[S.size() - 1];
 

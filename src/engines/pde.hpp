@@ -60,7 +60,10 @@ protected:
     [[nodiscard]] virtual Solution compute_solution() const;
     /// Vanilla/custom-payoff solve on the free-far-field grid (also the
     /// vanilla leg of barrier parity).
-    [[nodiscard]] Solution compute_vanilla() const;
+    /// Vanilla/custom-payoff solve. `domain` `(smin, smax)` overrides the
+    /// legacy `smax_mult` span: the auto vanilla domain, or the barrier's
+    /// far-field domain for the knock-in parity leg.
+    [[nodiscard]] Solution compute_vanilla(std::optional<std::pair<double, double>> domain) const;
     /// Black-Scholes-identity theta read from one solved surface.
     [[nodiscard]] double grid_theta_identity(const Solution& result) const;
     /// (delta, gamma) when the spot node sits in the American early-exercise

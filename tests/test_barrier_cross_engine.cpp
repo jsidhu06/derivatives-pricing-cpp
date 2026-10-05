@@ -160,10 +160,11 @@ TEST_CASE("in/out parity holds on the tree and PDE", "[barrier][parity][cross_en
             params,
             PricingMethod::PdeFd,
             PdeParams{.spot_steps = 400, .time_steps = 400, .space_grid = PdeSpaceGrid::LogSpot});
-        // The PDE prices a European knock-in as vanilla - knock-out on the
-        // same grid, so parity is exact here (Python allows 2e-3): this
-        // pins that wiring rather than the discretisation.
-        CHECK_THAT(p.knock_in + p.knock_out, close_to(p.vanilla, 1e-10, 1e-12));
+        // The knock-in is vanilla - knock-out on the barrier's grid, while the
+        // standalone vanilla uses its own auto (sigma*sqrt(T)) domain, so the
+        // residual is the difference of two discretisations: measured <= 1.4e-4
+        // (Python allows 2e-3).
+        CHECK_THAT(p.knock_in + p.knock_out, close_to(p.vanilla, 5e-4, 1e-4));
     }
     SECTION("binomial tree") {
         const auto p =

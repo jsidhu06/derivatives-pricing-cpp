@@ -53,8 +53,17 @@ struct BinomialParams {
 
 /// Parameters for finite-difference PDE valuation.
 struct PdeParams {
-    /// `S_max = smax_mult * max(spot, strike)`.
-    double smax_mult = 4.0;
+    /// Spatial domain control. Unset (default) sizes the domain from
+    /// `sigma * sqrt(T)`: vanillas use the smallest log-interval containing
+    /// the spot and forward with 6 standard deviations of ln(S_T) of margin
+    /// (capped at `4 * max(spot, strike)` on the uniform Spot grid);
+    /// barriers use the legacy `4 * max(spot, strike)` span, widened on the
+    /// LogSpot grid when it reaches fewer than 3 standard deviations; custom
+    /// payoffs use the legacy span. A value sets the legacy domain exactly:
+    /// `[0, m * max(S, K)]` (Spot) or `[max(S, K) / m, m * max(S, K)]`
+    /// (LogSpot), and must be > 1. A boundary within 3 standard deviations
+    /// of the spot/forward warns.
+    std::optional<double> smax_mult = std::nullopt;
     int spot_steps = 200;
     int time_steps = 200;
     /// SOR relaxation parameter for PSOR, in (1, 2).

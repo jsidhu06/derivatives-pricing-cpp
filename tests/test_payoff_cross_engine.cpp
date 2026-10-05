@@ -168,9 +168,11 @@ TEST_CASE("custom payoffs replicate their vanilla legs on the tree and PDE",
     const auto call = [&](double k) { return value(vanilla(OptionType::Call, k)); };
     const auto put = [&](double k) { return value(vanilla(OptionType::Put, k)); };
     // Python checks 1%. The tree prices on one lattice, so replication is
-    // exact up to rounding; the PDE grid differs per strike (S_max scales
-    // with the strike) and its kinks sit between nodes (measured <= 1.2e-4).
-    const double rtol = method == PricingMethod::Binomial ? 1e-12 : 5e-4;
+    // exact up to rounding. On the PDE the custom payoff keeps the legacy
+    // 4 * S span while each vanilla leg gets its own auto (sigma*sqrt(T))
+    // domain, so the residual is the difference of discretisations
+    // (measured <= 6e-4).
+    const double rtol = method == PricingMethod::Binomial ? 1e-12 : 1.5e-3;
 
     CHECK_THAT(value(payoff_spec(bull_call_spread)), WithinRel(call(95.0) - call(115.0), rtol));
     CHECK_THAT(value(payoff_spec(straddle)), WithinRel(call(100.0) + put(100.0), rtol));

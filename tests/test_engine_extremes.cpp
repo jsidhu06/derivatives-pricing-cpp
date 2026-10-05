@@ -22,9 +22,11 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <optional>
+#include <utility>
 
 using namespace dp;
 using Catch::Matchers::WithinAbs;
@@ -326,4 +328,229 @@ TEST_CASE("BSM and Monte Carlo agree exactly at zero volatility", "[mc][edge]") 
     const double bsm = bsm_pv(ud(100.0, 0.0), s);
     CHECK(std::isfinite(mc));
     CHECK_THAT(mc, close_to(bsm, 1e-10, 1e-10));
+}
+
+// ---------------------------------------------------------------------------
+// Auto PDE domain (smax_mult unset)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// The default vanilla grid used to span [0, 4 * max(S, K)] regardless of the
+// horizon: with 200 nodes dS = 2 exceeds a one-day standard deviation (~1),
+// so a 1-day ATM call priced 42% low with no warning, and high vol / long
+// maturities were truncated silently. The auto domain spans the spot and
+// forward with 6 sigma*sqrt(T) of margin (uncapped on the log grid, capped
+// at 4 * max(S, K) on the spot grid) with forward-intrinsic boundary
+// conditions; an explicit smax_mult keeps the legacy domain exactly.
+
+UnderlyingData bsm_market(double vol, double rate, double div_yield, DateTime maturity) {
+    std::optional<DiscountCurve> q_curve;
+    if (div_yield != 0.0) {
+        q_curve = flat_curve(kPricingDate, maturity, div_yield);
+    }
+    return ud(100.0, vol, md(rate, maturity), std::move(q_curve));
+}
+
+bool any_pde_warning(const dp::test::WarningCapture& capture) {
+    return capture.any_contains("PDE grid") || capture.any_contains("PDE domain");
+}
+
+constexpr std::array<PdeSpaceGrid, 2> kGrids{PdeSpaceGrid::Spot, PdeSpaceGrid::LogSpot};
+
+}  // namespace
+
+TEST_CASE("short-dated ATM options price like BSM on the auto PDE domain", "[pde][edge][domain]") {
+    const auto horizon =
+        GENERATE(std::chrono::hours{1}, std::chrono::hours{24}, std::chrono::hours{168});
+    const auto grid = GENERATE(PdeSpaceGrid::Spot, PdeSpaceGrid::LogSpot);
+    const auto type = GENERATE(OptionType::Call, OptionType::Put);
+    const DateTime maturity = kPricingDate + horizon;
+    const auto u = bsm_market(0.20, kRate, 0.0, maturity);
+    const auto s = spec(type, 100.0, ExerciseType::European, maturity);
+    CHECK_THAT(pde_pv(u, s, {.space_grid = grid}),
+               WithinRel(bsm_pv(u, s), 2e-3));  // measured <= 4.4e-4
+}
+
+TEST_CASE("auto PDE domain matches BSM across tenors, vols, strikes and carry",
+          "[pde][edge][domain][slow]") {
+    // Measured worst (200 x 200): abs <= 1.4e-3 (30d, 0.31 put); relative
+    // errors up to ~1.2% only on ~1-cent or deep-OTM values, where the
+    // off-node strike dominates. The bug this guards against was 4-86%.
+    const dp::test::WarningCapture capture;  // the spot grid's 4x cap warns at high vol / long T
+    for (const int days : {1, 7, 30, 365}) {
+        for (const double vol : {0.10, 0.20, 0.50}) {
+            for (const double moneyness : {0.8, 0.9, 1.0, 1.1, 1.2}) {
+                for (const auto& [rate, div_yield] :
+                     {std::pair{0.05, 0.0}, std::pair{0.01, 0.04}}) {
+                    for (const auto grid : kGrids) {
+                        for (const auto type : {OptionType::Call, OptionType::Put}) {
+                            CAPTURE(days,
+                                    vol,
+                                    moneyness,
+                                    rate,
+                                    div_yield,
+                                    to_string(grid),
+                                    to_string(type));
+                            const DateTime maturity = kPricingDate + std::chrono::days{days};
+                            const auto u = bsm_market(vol, rate, div_yield, maturity);
+                            const auto s =
+                                spec(type, 100.0 * moneyness, ExerciseType::European, maturity);
+                            CHECK_THAT(pde_pv(u, s, {.space_grid = grid}),
+                                       close_to(bsm_pv(u, s), 1.5e-2, 2e-4));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+TEST_CASE("auto PDE domain: refinement, Greeks and very short maturities", "[pde][edge][domain]") {
+    const auto grid = GENERATE(PdeSpaceGrid::Spot, PdeSpaceGrid::LogSpot);
+    CAPTURE(to_string(grid));
+    const DateTime one_day = kPricingDate + std::chrono::days{1};
+    const auto u = bsm_market(0.20, kRate, 0.0, one_day);
+    const auto s = spec(OptionType::Call, 100.0, ExerciseType::European, one_day);
+    const double bsm = bsm_pv(u, s);
+
+    SECTION("refinement shrinks the error (not monotonically: the strike sits between nodes)") {
+        const auto err = [&](int n) {
+            return std::abs(pde_pv(u, s, {.spot_steps = n, .time_steps = n, .space_grid = grid}) -
+                            bsm);
+        };
+        CHECK(err(400) < err(100));
+        CHECK(err(400) < 1e-4);  // measured ~5e-4 at 100 nodes, < 5e-5 at 400
+    }
+    SECTION("1-day ATM delta, gamma and theta match BSM") {
+        const OptionValuation pde(u, s, PricingMethod::PdeFd, PdeParams{.space_grid = grid});
+        const OptionValuation closed(u, s, PricingMethod::Bsm);
+        CHECK_THAT(pde.delta(), WithinRel(closed.delta(), 2e-3));  // measured <= 7e-4
+        CHECK_THAT(pde.gamma(), WithinRel(closed.gamma(), 2e-3));
+        CHECK_THAT(pde.theta(), WithinRel(closed.theta(), 2e-3));
+    }
+    SECTION("a 1-minute option is resolved without a warning (no minimum width)") {
+        const DateTime one_minute = kPricingDate + std::chrono::minutes{1};
+        const auto short_u = bsm_market(0.20, kRate, 0.0, one_minute);
+        const auto short_s = spec(OptionType::Call, 100.0, ExerciseType::European, one_minute);
+        const dp::test::WarningCapture capture;
+        const double value = pde_pv(short_u, short_s, {.space_grid = grid});
+        CHECK_FALSE(any_pde_warning(capture));
+        CHECK_THAT(value, WithinRel(bsm_pv(short_u, short_s), 2e-3));
+    }
+}
+
+TEST_CASE("the auto PDE domain need not contain the strike", "[pde][edge][domain]") {
+    // Forward-intrinsic boundary conditions are exact far from the strike
+    // (measured <= 4e-8 against BSM / a 500-step tree).
+    struct Case {
+        OptionType type = OptionType::Call;
+        double strike = 0.0;
+    };
+    const auto c = GENERATE(Case{OptionType::Put, 200.0},
+                            Case{OptionType::Call, 50.0},
+                            Case{OptionType::Call, 150.0},
+                            Case{OptionType::Put, 60.0});
+    const int days = GENERATE(1, 7);
+    const auto exercise = GENERATE(ExerciseType::European, ExerciseType::American);
+    const auto grid = GENERATE(PdeSpaceGrid::Spot, PdeSpaceGrid::LogSpot);
+    CAPTURE(to_string(c.type), c.strike, days, to_string(exercise), to_string(grid));
+    const DateTime maturity = kPricingDate + std::chrono::days{days};
+    const auto u = bsm_market(0.20, kRate, 0.0, maturity);
+    const auto s = spec(c.type, c.strike, exercise, maturity);
+    const dp::test::WarningCapture capture;
+    const double value = pde_pv(u, s, {.space_grid = grid});
+    CHECK_FALSE(any_pde_warning(capture));
+    const double reference = exercise == ExerciseType::American ? tree_pv(u, s, 500) : bsm_pv(u, s);
+    CHECK_THAT(value, WithinAbs(reference, 1e-6));
+}
+
+TEST_CASE("high-vol long-dated PDE domains", "[pde][edge][domain]") {
+    const DateTime maturity = make_datetime(2030, 1, 1);
+    const auto u = bsm_market(0.80, kRate, 0.0, maturity);
+    const auto s = spec(OptionType::Call, 100.0, ExerciseType::European, maturity);
+    const double bsm = bsm_pv(u, s);
+    const auto log_params = [](std::optional<double> smax_mult) {
+        return PdeParams{.smax_mult = smax_mult,
+                         .spot_steps = 400,
+                         .time_steps = 400,
+                         .space_grid = PdeSpaceGrid::LogSpot};
+    };
+
+    SECTION("the log grid widens the auto domain past 4x (was -9.1%)") {
+        const dp::test::WarningCapture capture;
+        CHECK_THAT(pde_pv(u, s, log_params(std::nullopt)),
+                   WithinRel(bsm, 1e-3));  // measured 3.5e-4
+        CHECK_FALSE(any_pde_warning(capture));
+    }
+    SECTION("the spot grid keeps its 4x cap and warns") {
+        const dp::test::WarningCapture capture;
+        (void)pde_pv(u, s, {.spot_steps = 400, .time_steps = 400});
+        CHECK(capture.any_contains("standard deviations of ln"));
+    }
+    SECTION("an explicit smax_mult is the legacy domain; truncation warns, widening converges") {
+        double legacy = 0.0;
+        {
+            const dp::test::WarningCapture capture;
+            legacy = pde_pv(u, s, log_params(4.0));
+            CHECK(any_pde_warning(capture));
+        }
+        CHECK_THAT(legacy, WithinRel(61.300193, 1e-6));  // the legacy -9.1% value
+        // ln(1000) / 1.79 ~ 3.9 standard deviations clears the warning threshold.
+        const dp::test::WarningCapture capture;
+        const double wide = pde_pv(u, s, log_params(1000.0));
+        CHECK_FALSE(any_pde_warning(capture));
+        CHECK(std::abs(wide - bsm) < std::abs(legacy - bsm) / 100.0);
+    }
+    SECTION("an explicit smax_mult reproduces the old 1-day bug, now with a warning") {
+        const DateTime one_day = kPricingDate + std::chrono::days{1};
+        const auto short_u = bsm_market(0.20, kRate, 0.0, one_day);
+        const auto short_s = spec(OptionType::Call, 100.0, ExerciseType::European, one_day);
+        const dp::test::WarningCapture capture;
+        CHECK_THAT(pde_pv(short_u, short_s, {.smax_mult = 4.0}), WithinRel(0.247901, 1e-5));
+        CHECK(capture.any_contains("nodes per standard deviation"));
+    }
+}
+
+TEST_CASE("high-vol barriers widen the PDE far side (smax_mult unset)",
+          "[barrier][pde][edge][domain]") {
+    // At sigma 0.8, T 5y the barrier PDE silently missed the closed form by
+    // -1.6% (down-and-out call) to -16% (up-and-in put; knock-ins inherited it
+    // through their vanilla parity leg).
+    struct Case {
+        BarrierDirection direction = BarrierDirection::Down;
+        double level = 0.0;
+        OptionType type = OptionType::Call;
+        BarrierAction action = BarrierAction::Out;
+    };
+    const auto c =
+        GENERATE(Case{BarrierDirection::Down, 80.0, OptionType::Call, BarrierAction::Out},
+                 Case{BarrierDirection::Up, 120.0, OptionType::Put, BarrierAction::Out},
+                 Case{BarrierDirection::Down, 80.0, OptionType::Call, BarrierAction::In},
+                 Case{BarrierDirection::Up, 120.0, OptionType::Put, BarrierAction::In});
+    CAPTURE(to_string(c.type), c.level);
+    const DateTime maturity = make_datetime(2030, 1, 1);
+    const auto u = bsm_market(0.80, kRate, 0.0, maturity);
+    const BarrierSpec contract({.option_type = c.type,
+                                .exercise_type = ExerciseType::European,
+                                .strike = 100.0,
+                                .maturity = maturity,
+                                .barrier = c.level,
+                                .direction = c.direction,
+                                .action = c.action,
+                                .currency = "USD"});
+    const double closed_form = bsm_pv(u, contract);
+    {
+        const dp::test::WarningCapture capture;
+        const double value = OptionValuation(u, contract, PricingMethod::PdeFd).present_value();
+        CHECK_FALSE(any_pde_warning(capture));
+        CHECK_THAT(value, WithinRel(closed_form, 5e-4));  // measured <= 6.3e-5
+    }
+    auto legacy_params = PdeParams::for_barriers(BarrierMonitoring::Continuous);
+    legacy_params.smax_mult = 4.0;
+    const dp::test::WarningCapture capture;
+    const double legacy =
+        OptionValuation(u, contract, PricingMethod::PdeFd, legacy_params).present_value();
+    CHECK(capture.any_contains("standard deviations of ln"));
+    CHECK(std::abs(legacy / closed_form - 1.0) > 1e-2);  // the legacy truncation bias
 }

@@ -23,6 +23,18 @@ using Eigen::Index;
 
 inline constexpr double kDaysPerYear = 365.0;
 
+/// `smax_mult` used when `PdeParams::smax_mult` is unset: the legacy domain
+/// of custom payoffs and barriers (before widening), and the vanilla Spot
+/// grid cap.
+inline constexpr double kDefaultSmaxMult = 4.0;
+
+[[nodiscard]] inline double resolved_smax_mult(const PdeParams& params) {
+    return params.smax_mult.value_or(kDefaultSmaxMult);
+}
+
+/// Far-field domain `(smin, smax)` of a PDE grid.
+using Domain = std::pair<double, double>;
+
 /// Round to 12 decimal places, ties to even (matches `np.round(x, 12)`),
 /// so taus from different arithmetic paths compare equal.
 [[nodiscard]] double round12(double x);
@@ -99,7 +111,55 @@ struct SpaceGridBuild {
                                             int time_steps,
                                             PdeMethod method,
                                             std::optional<double> anchor_spot = std::nullopt,
-                                            bool anchor_half_step = false);
+                                            bool anchor_half_step = false,
+                                            std::optional<Domain> domain = std::nullopt);
+
+// ── Domain sizing ───────────────────────────────────────────────────
+
+/// ln F(0, T) with the continuous yield and cash dividends (escrowed PV).
+[[nodiscard]] double log_forward(const detail::ValuationState& state);
+
+/// Auto vanilla domain: the smallest log-interval containing the spot and
+/// the forward, each with 6 standard deviations of ln(S_T) of margin. The
+/// strike need not lie inside: the forward-intrinsic boundary conditions
+/// (`boundary_values`) are exact far from it, and a boundary error 6
+/// standard deviations away decays by ~erfc(6 / sqrt(2)) ~ 2e-9 before
+/// reaching the spot. Uncapped on the LogSpot grid (wider costs little
+/// resolution in log space); capped at `4 * max(S, K)` on the Spot grid.
+[[nodiscard]] Domain fitted_vanilla_domain(const detail::ValuationState& state,
+                                           double strike,
+                                           double log_fwd,
+                                           PdeSpaceGrid space_grid);
+
+/// Barrier far-field targets: the legacy domain (`[0, smax_mult * max(S, K)]`
+/// Spot, `[max(S, K) / smax_mult, smax_mult * max(S, K)]` LogSpot, with
+/// `smax_mult` defaulting to 4). With
+/// `smax_mult` unset on the LogSpot grid, a side reaching fewer than 3
+/// standard deviations from the spot/forward is widened to 6; the domain is
+/// never narrowed, so it always contains the strike. A continuously
+/// monitored barrier replaces its side in the caller.
+[[nodiscard]] Domain barrier_domain(const detail::ValuationState& state,
+                                    double strike,
+                                    double log_fwd,
+                                    const PdeParams& params);
+
+/// Warn when a far-field boundary is within 3 standard deviations of the
+/// distribution (the nearer of spot and forward). `nullopt` skips a side (a
+/// continuously monitored barrier is an exact boundary).
+void warn_if_domain_truncated(std::optional<double> smin,
+                              std::optional<double> smax,
+                              double spot,
+                              double log_fwd,
+                              double time_to_maturity,
+                              double volatility);
+
+/// Warn when the grid has fewer than 3 nodes per standard deviation of
+/// ln(S_T) at the spot.
+void warn_if_under_resolved(double spot,
+                            double spacing,
+                            double time_to_maturity,
+                            double volatility,
+                            PdeSpaceGrid space_grid);
 
 /// Uniform spot grid, optionally aligning an anchor to a node or midpoint.
 [[nodiscard]] SpaceGridBuild build_spot_grid(double smin,
