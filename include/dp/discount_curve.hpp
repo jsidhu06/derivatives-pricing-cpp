@@ -10,8 +10,10 @@ namespace dp {
 /// Discount curve defined by discount factors at increasing year fractions.
 ///
 /// Interpolation is log-linear in the discount factor (piecewise-constant
-/// forward rates). Outside the knot range the log-DF is held flat and a
-/// warning is emitted via `dp::warn`. `df(0)` is always exactly 1.
+/// forward rates). `df(0)` is always exactly 1: when the first knot is after
+/// 0, the curve starts from an implicit (0, 1) knot, so the first zero rate
+/// applies flat back to the origin. Past the last knot the last forward rate
+/// is extended and a warning is emitted via `dp::warn`.
 ///
 /// Instances are immutable after construction.
 class DiscountCurve {
@@ -59,13 +61,17 @@ public:
     [[nodiscard]] DiscountCurve bump_parallel_zero_rate(double bump) const;
 
 private:
-    /// Log-linear interpolation of log(DF), flat beyond the knots, no origin
-    /// special-casing and no warnings.
+    /// Log-linear interpolation of log(DF) on the anchored knots, extending
+    /// the end segments' forward rates beyond them; no origin special-casing
+    /// and no warnings.
     [[nodiscard]] double interp_log_df(double t) const noexcept;
 
     Eigen::ArrayXd times_;
     Eigen::ArrayXd dfs_;
-    Eigen::ArrayXd log_dfs_;
+    /// Interpolation knots: (times_, log dfs_), prefixed with (0, 0) when
+    /// times_[0] > 0.
+    Eigen::ArrayXd knot_times_;
+    Eigen::ArrayXd knot_log_dfs_;
 };
 
 }  // namespace dp

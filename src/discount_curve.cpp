@@ -54,7 +54,17 @@ DiscountCurve::DiscountCurve(Eigen::ArrayXd times, Eigen::ArrayXd dfs)
     if ((dfs_ > 1.0 + kNegativeRateTolerance).any()) {
         warn("Discount factors > 1 detected (negative rates)");
     }
-    log_dfs_ = dfs_.log();
+    // Interpolation knots anchored at (0, DF = 1): when the first knot is
+    // after 0, the first zero rate applies flat back to the origin.
+    if (times_[0] > 0.0) {
+        knot_times_.resize(times_.size() + 1);
+        knot_times_ << 0.0, times_;
+        knot_log_dfs_.resize(times_.size() + 1);
+        knot_log_dfs_ << 0.0, dfs_.log();
+    } else {
+        knot_times_ = times_;
+        knot_log_dfs_ = dfs_.log();
+    }
 }
 
 DiscountCurve DiscountCurve::flat(double rate, double end_time) {
@@ -106,7 +116,7 @@ std::optional<double> DiscountCurve::flat_rate() const {
         return std::nullopt;
     }
     // Infer rate from the last tenor and check every knot is consistent with it.
-    const double candidate = -log_dfs_[last] / t_last;
+    const double candidate = -std::log(dfs_[last]) / t_last;
     const Eigen::ArrayXd implied = (-candidate * times_).exp();
     constexpr double kRtol = 1e-10;
     constexpr double kAtol = 1e-12;
@@ -118,29 +128,34 @@ std::optional<double> DiscountCurve::flat_rate() const {
 }
 
 double DiscountCurve::interp_log_df(double t) const noexcept {
-    const auto n = times_.size();
-    if (t <= times_[0]) {
-        return log_dfs_[0];
+    const auto& x = knot_times_;
+    const auto& y = knot_log_dfs_;
+    const auto n = x.size();
+    // Beyond either end the adjacent segment's forward rate continues.
+    if (t <= x[0]) {
+        const double forward = (y[0] - y[1]) / (x[1] - x[0]);
+        return y[0] - forward * (t - x[0]);
     }
-    if (t >= times_[n - 1]) {
-        return log_dfs_[n - 1];
+    if (t >= x[n - 1]) {
+        const double forward = (y[n - 2] - y[n - 1]) / (x[n - 1] - x[n - 2]);
+        return y[n - 1] - forward * (t - x[n - 1]);
     }
     // First knot strictly greater than t; its predecessor is the left knot.
-    const auto upper = std::upper_bound(times_.begin(), times_.end(), t);
-    const Eigen::Index i = std::distance(times_.begin(), upper) - 1;
-    const double w = (t - times_[i]) / (times_[i + 1] - times_[i]);
-    return log_dfs_[i] + w * (log_dfs_[i + 1] - log_dfs_[i]);
+    const auto upper = std::upper_bound(x.begin(), x.end(), t);
+    const Eigen::Index i = std::distance(x.begin(), upper) - 1;
+    const double w = (t - x[i]) / (x[i + 1] - x[i]);
+    return y[i] + w * (y[i + 1] - y[i]);
 }
 
 double DiscountCurve::df(double t) const {
     if (is_origin(t)) {
         return 1.0;
     }
-    const double t_min = times_[0];
-    const double t_max = times_[times_.size() - 1];
+    const double t_min = knot_times_[0];
+    const double t_max = knot_times_[knot_times_.size() - 1];
     if (t < t_min || t > t_max) {
         warn(std::format(
-            "Extrapolating discount curve outside [{:.4f}, {:.4f}] — flat log-DF assumed",
+            "Extrapolating discount curve outside [{:.4f}, {:.4f}] — flat forward rate assumed",
             t_min,
             t_max));
     }
@@ -148,8 +163,8 @@ double DiscountCurve::df(double t) const {
 }
 
 Eigen::ArrayXd DiscountCurve::df(const Eigen::ArrayXd& t) const {
-    const double t_min = times_[0];
-    const double t_max = times_[times_.size() - 1];
+    const double t_min = knot_times_[0];
+    const double t_max = knot_times_[knot_times_.size() - 1];
 
     bool any_outside = false;
     Eigen::ArrayXd out(t.size());
@@ -164,7 +179,7 @@ Eigen::ArrayXd DiscountCurve::df(const Eigen::ArrayXd& t) const {
     }
     if (any_outside) {
         warn(std::format(
-            "Extrapolating discount curve outside [{:.4f}, {:.4f}] — flat log-DF assumed",
+            "Extrapolating discount curve outside [{:.4f}, {:.4f}] — flat forward rate assumed",
             t_min,
             t_max));
     }

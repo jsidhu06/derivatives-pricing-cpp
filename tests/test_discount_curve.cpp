@@ -190,14 +190,31 @@ TEST_CASE("vectorised df matches scalar df", "[discount_curve]") {
     }
 }
 
-TEST_CASE("extrapolation is flat in log-DF and warns", "[discount_curve]") {
+TEST_CASE("extrapolation extends the last forward rate and warns", "[discount_curve]") {
+    // Regression: the DF used to freeze past the last knot, i.e. a zero
+    // forward rate (flat(5%, 1y).df(2) gave 0.951 instead of 0.905).
     const auto curve = sample_curve();
     const double t_far = GENERATE(3.0, 10.0, 20.0, 100.0);
+    const double last_forward = std::log(0.95 / 0.90);  // on [1, 2]
 
     const dp::test::WarningCapture capture;
-    const double df_far = curve.df(t_far);
-    CHECK_THAT(df_far, WithinRel(curve.df(2.0), 1e-12));
+    CHECK_THAT(curve.df(t_far), WithinRel(0.90 * std::exp(-last_forward * (t_far - 2.0)), 1e-12));
     CHECK(capture.any_contains("Extrapolating discount curve"));
+
+    const auto flat = DiscountCurve::flat(0.05, 1.0);
+    CHECK_THAT(flat.df(2.0), WithinRel(std::exp(-0.10), 1e-12));
+}
+
+TEST_CASE("the first zero rate applies back to the origin", "[discount_curve]") {
+    // Regression: with the first knot after 0, the DF used to freeze at the
+    // first knot's value, a jump at the origin (df(1e-6) = 0.951 at 5%).
+    // The curve now starts from an implicit (0, 1) knot, without warning.
+    const auto curve = DiscountCurve::from_zero_rates(arr({1.0, 2.0}), arr({0.05, 0.05}));
+    const dp::test::WarningCapture capture;
+    CHECK_THAT(curve.df(0.5), WithinRel(std::exp(-0.025), 1e-12));
+    CHECK_THAT(curve.df(1e-6), WithinRel(std::exp(-0.05e-6), 1e-12));
+    CHECK_THAT(curve.forward_rate(0.0, 0.25), WithinRel(0.05, 1e-12));
+    CHECK(capture.empty());
 }
 
 TEST_CASE("vectorised extrapolation warns once per call", "[discount_curve]") {
