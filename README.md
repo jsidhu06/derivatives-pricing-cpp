@@ -64,22 +64,27 @@ Planned: pybind11 bindings. Asian options are out of scope for v1.
 ```cpp
 #include "dp/dp.hpp"
 
-using namespace dp;
+#include <format>
+#include <iostream>
 
-const auto pricing_date = make_datetime(2025, 1, 1);
-const auto maturity = make_datetime(2025, 7, 1);
+int main() {
+    using namespace dp;
 
-const MarketData market(pricing_date, DiscountCurve::flat(0.05), "USD");
-const UnderlyingData underlying(100.0, 0.20, market);
-const VanillaSpec spec({.option_type = OptionType::Call,
-                        .exercise_type = ExerciseType::European,
-                        .strike = 105.0,
-                        .maturity = maturity});
+    const auto pricing_date = make_datetime(2025, 1, 1);
+    const auto maturity = make_datetime(2025, 7, 1);
 
-const OptionValuation val(underlying, spec, PricingMethod::Bsm);
-std::println("PV {:.4f}  delta {:.4f}", val.present_value(), val.delta());
-std::println("numerical vega {:.4f}",
-             val.vega({.method = GreekCalculationMethod::Numerical}));
+    const MarketData market(pricing_date, DiscountCurve::flat(0.05), "USD");
+    const UnderlyingData underlying(100.0, 0.20, market);
+    const VanillaSpec spec({.option_type = OptionType::Call,
+                            .exercise_type = ExerciseType::European,
+                            .strike = 105.0,
+                            .maturity = maturity});
+
+    const OptionValuation val(underlying, spec, PricingMethod::Bsm);
+    std::cout << std::format("PV {:.4f}  delta {:.4f}\n", val.present_value(), val.delta());
+    std::cout << std::format("numerical vega {:.4f}\n",
+                             val.vega({.method = GreekCalculationMethod::Numerical}));
+}
 ```
 
 ## Build
