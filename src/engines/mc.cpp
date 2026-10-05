@@ -843,8 +843,7 @@ ArrayXd McBarrierEngine::barrier_pathwise_american() const {
     }
 
     const BarrierPathState path_state = american_barrier_state(sim, start, n_times);
-    ArrayXd values =
-        initial_barrier_values(payoff_at(sim.paths.col(end).array()), path_state.ever_hit.back());
+    ArrayXd values = initial_barrier_values(payoff_at(sim.paths.col(end).array()), path_state);
 
     for (Index t = n_times - 2; t >= 1; --t) {
         const ArrayXd spots = sim.paths.col(start + t).array();
@@ -927,12 +926,22 @@ McBarrierEngine::BarrierPathState McBarrierEngine::american_barrier_state(
 }
 
 ArrayXd McBarrierEngine::initial_barrier_values(const ArrayXd& intrinsic_end,
-                                                const BoolArray& hit_end) const {
+                                                const BarrierPathState& state) const {
     const BarrierSpec& spec = this->spec();
     const double rebate = spec.rebate();
+    const BoolArray& hit_end = state.ever_hit.back();
     if (spec.action() == BarrierAction::Out) {
         if (rebate > 0.0 && spec.rebate_timing() == RebateTiming::AtExpiry) {
             return hit_end.select(rebate, intrinsic_end);
+        }
+        if (rebate > 0.0) {
+            // At-hit: earlier hits receive the rebate at their hit step
+            // during backward induction; a first hit on the final step is
+            // paid here, at maturity.
+            const auto last_step = static_cast<Eigen::Index>(state.ever_hit.size()) - 1;
+            const BoolArray hit_at_maturity = state.first_hit_step == last_step;
+            return hit_end.select(hit_at_maturity.select(rebate, ArrayXd::Zero(hit_end.size())),
+                                  intrinsic_end);
         }
         return (!hit_end).cast<double>() * intrinsic_end;
     }

@@ -145,7 +145,7 @@ private:
                                                           Eigen::Index n_times) const;
     /// Terminal path values before backward induction.
     [[nodiscard]] Eigen::ArrayXd initial_barrier_values(const Eigen::ArrayXd& intrinsic_end,
-                                                        const BoolArray& hit_end) const;
+                                                        const BarrierPathState& state) const;
     /// One backward-induction step for an American knock-out: regress on
     /// alive + ITM paths; knocked-out paths carry their rebate leg.
     [[nodiscard]] Eigen::ArrayXd knock_out_step_values(Eigen::Index t,

@@ -280,6 +280,22 @@ TEST_CASE("analytical barrier rejections", "[barrier]") {
                              message_contains("Numerical theta is not supported"));
     }
 
+    SECTION("discrete barrier with the spot already past it") {
+        // Regression: the pricing date is not an observation, so the option
+        // is live, but the closed form is only valid with the spot on the
+        // live side. It returned 1.29 against ~5.3 from the PDE and tree.
+        auto params = base_params(105.0, BarrierDirection::Down, BarrierAction::Out);
+        params.monitoring = BarrierMonitoring::Discrete;
+        params.num_observations = 4;
+        const OptionValuation ov(ud(), barrier_spec(params), PricingMethod::Bsm);
+        CHECK_THROWS_MATCHES(ov.present_value(),
+                             UnsupportedFeatureError,
+                             message_contains("requires the spot on the live side"));
+        // The numerical engines price it.
+        CHECK(OptionValuation(ud(), barrier_spec(params), PricingMethod::PdeFd).present_value() >
+              0.0);
+    }
+
     SECTION("American exercise") {
         auto params = base_params(120.0, BarrierDirection::Up, BarrierAction::Out);
         params.exercise_type = ExerciseType::American;

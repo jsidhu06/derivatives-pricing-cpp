@@ -425,7 +425,7 @@ PdeEngine::Solution PdeBarrierEngine::compute_barrier_knock_out() const {
         payoff = (strike - S).cwiseMax(0.0);
     }
     // American intrinsic stays the vanilla payoff at any in-life moment,
-    // regardless of the KO-zone zeroing applied to the terminal slice below.
+    // regardless of the KO-zone reset applied to the terminal slice below.
     const ArrayXd intrinsic_values = payoff;
     const ArrayXd* intrinsic = early ? &intrinsic_values : nullptr;
 
@@ -433,10 +433,12 @@ PdeEngine::Solution PdeBarrierEngine::compute_barrier_knock_out() const {
     for (const double tau : monitoring_taus) {
         monitoring_tau_set.insert(round12(tau));
     }
+    // A maturity observation knocks out the KO-zone nodes *at* maturity:
+    // they receive the rebate (at-hit and at-expiry coincide at T).
     if (!continuous && monitoring_tau_set.contains(0.0)) {
         for (Index i = 0; i < S.size(); ++i) {
             if (hit(i)) {
-                payoff[i] = 0.0;
+                payoff[i] = rebate;
             }
         }
     }

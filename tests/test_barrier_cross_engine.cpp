@@ -535,3 +535,42 @@ TEST_CASE("American barriers with discrete dividends agree on the PDE and MC",
     // (PV 0.26-0.44) up to 3% relative, inside the absolute floor.
     CHECK_THAT(mc, close_to(pde, 2.5e-2, 1e-2));
 }
+
+// ---------------------------------------------------------------------------
+// Regression: knock-out at-hit rebate on a maturity hit
+// ---------------------------------------------------------------------------
+
+TEST_CASE("discrete knock-outs pay the rebate when first hit at maturity",
+          "[barrier][rebate][discrete][cross_engine]") {
+    // Bug (shared with the Python reference until fixed): the PDE zeroed
+    // the knocked-out nodes at a maturity observation instead of paying the
+    // rebate, and American LSM dropped it for paths first hit on the final
+    // step. The PDE sat ~3% below the tree and MC, and American MC below
+    // European. Fixed in both engines; the tree and European MC were right.
+    struct Case {
+        OptionType type = OptionType::Call;
+        BarrierDirection direction = BarrierDirection::Down;
+        double level = 0.0;
+    };
+    const auto c = GENERATE(Case{OptionType::Call, BarrierDirection::Down, 90.0},
+                            Case{OptionType::Put, BarrierDirection::Up, 115.0});
+    const int observations = GENERATE(4, 12);
+    CAPTURE(to_string(c.type), observations);
+    const UnderlyingData u(100.0, 0.30, md());
+    auto params = discrete(barrier(c.level, c.direction, BarrierAction::Out, c.type), observations);
+    params.rebate = 10.0;
+
+    const GbmProcess process(md(),
+                             {.initial_value = 100.0, .volatility = 0.30},
+                             {.paths = 50'000, .end_date = kMaturity, .num_steps = 52});
+    for (const auto exercise : {ExerciseType::European, ExerciseType::American}) {
+        CAPTURE(to_string(exercise));
+        params.exercise_type = exercise;
+        const BarrierSpec spec(params);
+        const double tree = OptionValuation(u, spec, PricingMethod::Binomial).present_value();
+        const double pde = OptionValuation(u, spec, PricingMethod::PdeFd).present_value();
+        const double mc = OptionValuation(process, spec, PricingMethod::MonteCarlo).present_value();
+        CHECK_THAT(pde, WithinRel(tree, 1e-3));   // measured <= 5e-4; the bug was ~3%
+        CHECK_THAT(mc, WithinRel(tree, 1.5e-2));  // 50k paths: measured <= 0.7%; the bug was ~3%
+    }
+}

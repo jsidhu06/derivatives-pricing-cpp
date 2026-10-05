@@ -285,6 +285,15 @@ double AnalyticalBarrierEngine::price_at_spot(const Inputs& in, double spot) con
 
     double barrier = in.barrier;
     if (spec.monitoring() == BarrierMonitoring::Discrete) {
+        if (spec.is_spot_past_barrier(spot)) {
+            // Not triggered (t=0 is not an observation), but the spot is on
+            // the far side of H: the closed form only covers spots on the
+            // live side, so it would return a silently wrong price.
+            throw UnsupportedFeatureError(
+                "Analytical discrete barrier pricing requires the spot on the live side of "
+                "the barrier; the spot is past it but the pricing date is not an observation "
+                "date. Use BINOMIAL, PDE_FD or MONTE_CARLO.");
+        }
         const std::optional<int> observations = spec.num_observations();
         if (!observations.has_value()) {
             throw UnsupportedFeatureError(
