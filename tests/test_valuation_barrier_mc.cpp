@@ -85,6 +85,20 @@ TEST_CASE("discrete MC barriers agree with the binomial engine", "[barrier][mc]"
     CHECK_THAT(mc_pv, close_to(tree_pv, 2.5e-2, 5e-3));
 }
 
+TEST_CASE("continuous MC barrier sits within a few standard errors of the closed form",
+          "[barrier][mc][std_error]") {
+    // Under GBM, Brownian-bridge survival weighting removes the
+    // discrete-monitoring bias, so MC and the closed form should agree
+    // within sampling error.
+    const auto params = base_params(115.0, BarrierDirection::Up, BarrierAction::Out);
+    const OptionValuation mc(gbm(), BarrierSpec(params), PricingMethod::MonteCarlo);
+    const auto std_error = mc.std_error();
+    REQUIRE(std_error.has_value());
+    const double se = std_error.value_or(0.0);
+    CHECK(se > 0.0);
+    CHECK(std::abs(mc.present_value() - analytic_pv(params)) < 4.0 * se);
+}
+
 TEST_CASE("continuous MC barriers agree with the closed form via the Brownian bridge",
           "[barrier][mc]") {
     const auto action = GENERATE(BarrierAction::In, BarrierAction::Out);

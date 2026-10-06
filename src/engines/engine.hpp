@@ -24,6 +24,9 @@ public:
 
     [[nodiscard]] virtual std::string_view name() const noexcept = 0;
     [[nodiscard]] virtual double present_value() const = 0;
+    /// Standard error of `present_value()`; `nullopt` for deterministic
+    /// engines.
+    [[nodiscard]] virtual std::optional<double> std_error() const { return std::nullopt; }
 
     [[nodiscard]] virtual double delta() const { return unsupported("delta"); }
     [[nodiscard]] virtual double gamma() const { return unsupported("gamma"); }

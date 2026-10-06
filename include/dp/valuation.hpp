@@ -73,6 +73,18 @@ public:
 
     /// Present value per unit of underlying (contract size not applied).
     [[nodiscard]] double present_value() const;
+    /// Monte Carlo standard error of `present_value()` (antithetic pairs
+    /// averaged before the sample variance; moment matching ignored). Same
+    /// simulation as the PV, so no extra cost. NaN with fewer than two
+    /// independent samples.
+    ///
+    /// `nullopt` for the deterministic methods: they have no sampling error
+    /// to report. That is "not applicable", not zero error; their
+    /// discretisation error is not measured here. Throws
+    /// `UnsupportedFeatureError` for Monte Carlo with
+    /// `control_variate_european`, where a sampling error exists but needs
+    /// the covariance of both legs, which is not computed.
+    [[nodiscard]] std::optional<double> std_error() const;
 
     /// dV/dS.
     [[nodiscard]] double delta(GreekOptions options = {}) const;

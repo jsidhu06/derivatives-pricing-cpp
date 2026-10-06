@@ -23,6 +23,8 @@
 #include <cmath>
 #include <optional>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 using namespace dp;
 using Catch::Matchers::WithinAbs;
@@ -143,6 +145,150 @@ TEST_CASE("MC European agrees with BSM", "[mc]") {
     const OptionValuation bsm(ud, spec(type), PricingMethod::Bsm);
     const OptionValuation mc(gbm(200'000), spec(type), PricingMethod::MonteCarlo);
     CHECK_THAT(mc.present_value(), WithinRel(bsm.present_value(), 1e-2));
+}
+
+// ---------------------------------------------------------------------------
+// Standard error
+// ---------------------------------------------------------------------------
+
+TEST_CASE("std_error is reported for Monte Carlo only, and memoised", "[mc][std_error]") {
+    const UnderlyingData ud(100.0, 0.20, md());
+    for (const auto method : {PricingMethod::Bsm, PricingMethod::Binomial, PricingMethod::PdeFd}) {
+        CHECK(OptionValuation(ud, spec(OptionType::Call), method).std_error() == std::nullopt);
+    }
+    const OptionValuation mc(gbm(20'000), spec(OptionType::Call), PricingMethod::MonteCarlo);
+    const auto se = mc.std_error();
+    REQUIRE(se.has_value());
+    CHECK(se.value_or(0.0) > 0.0);
+    CHECK(mc.std_error() == se);
+
+    const OptionValuation american(
+        gbm(20'000), spec(OptionType::Put, ExerciseType::American), PricingMethod::MonteCarlo);
+    const auto american_se = american.std_error();
+    REQUIRE(american_se.has_value());
+    CHECK(american_se.value_or(0.0) > 0.0);
+}
+
+namespace {
+
+/// GBM with i.i.d. draws unless `antithetic`; moment matching off.
+GbmProcess plain_gbm(int paths, bool antithetic) {
+    return {md(),
+            {.initial_value = 100.0, .volatility = 0.20},
+            {.paths = paths,
+             .end_date = kMaturity,
+             .num_steps = 4,
+             .antithetic = antithetic,
+             .moment_matching = false}};
+}
+
+}  // namespace
+
+TEST_CASE("std_error matches the seed-to-seed spread of the MC price", "[mc][std_error]") {
+    // Across 20 independent seeds, the sample sd of the PVs should be close
+    // to the mean reported SE. If the SE were known exactly the ratio would
+    // be chi(19)/sqrt(19) (95% in [0.68, 1.31]); it is estimated, so the
+    // band is deliberately wider.
+    //
+    // The antithetic case uses a deep ITM call, nearly linear in S_T, so
+    // mirrored paths are strongly negatively correlated and an unpaired SE
+    // would be ~5x too large (ratio ~0.2, failing). An ATM call would not
+    // discriminate: its unpaired ratio is ~0.6-0.8, inside the band.
+    const auto [antithetic, strike] = GENERATE(std::pair{false, 100.0}, std::pair{true, 60.0});
+    CAPTURE(antithetic, strike);
+    const GbmProcess process = plain_gbm(20'000, antithetic);
+    constexpr unsigned long long kSeeds = 20;
+    std::vector<double> pvs;
+    double se_sum = 0.0;
+    for (unsigned long long seed = 1000; seed < 1000 + kSeeds; ++seed) {
+        const OptionValuation mc(process,
+                                 spec(OptionType::Call, ExerciseType::European, strike),
+                                 PricingMethod::MonteCarlo,
+                                 MonteCarloParams{.random_seed = seed});
+        const auto std_error = mc.std_error();
+        REQUIRE(std_error.has_value());
+        se_sum += std_error.value_or(0.0);
+        pvs.push_back(mc.present_value());
+    }
+    const auto n = static_cast<double>(kSeeds);
+    double mean = 0.0;
+    for (const double pv : pvs) {
+        mean += pv / n;
+    }
+    double variance = 0.0;
+    for (const double pv : pvs) {
+        variance += (pv - mean) * (pv - mean) / (n - 1.0);
+    }
+    const double ratio = std::sqrt(variance) / (se_sum / n);
+    CAPTURE(ratio);
+    CHECK(ratio > 0.6);
+    CHECK(ratio < 1.4);
+}
+
+TEST_CASE("MC European sits within a few standard errors of BSM", "[mc][std_error]") {
+    // Default MC settings (antithetic + moment matching) across seeds.
+    const UnderlyingData ud(100.0, 0.20, md());
+    const double bsm =
+        OptionValuation(ud, spec(OptionType::Call), PricingMethod::Bsm).present_value();
+    for (unsigned long long seed = 1000; seed < 1005; ++seed) {
+        const OptionValuation mc(gbm(20'000),
+                                 spec(OptionType::Call),
+                                 PricingMethod::MonteCarlo,
+                                 MonteCarloParams{.random_seed = seed});
+        const auto std_error = mc.std_error();
+        REQUIRE(std_error.has_value());
+        CHECK(std::abs(mc.present_value() - bsm) < 4.0 * std_error.value_or(0.0));
+    }
+}
+
+TEST_CASE("std_error averages antithetic pairs before the variance", "[mc][std_error]") {
+    // Antithetic pairing cuts the SE of the payoff S_T by the expected
+    // factor. Under GBM, S_T = F e^{-x^2/2 + xZ} with x = sigma sqrt(T); a
+    // mirrored pair averages to F e^{-x^2/2} cosh(xZ). With n total paths
+    // (n/2 pairs), plain sampling has SE^2 = Var(e^{xZ}) / n and paired
+    // sampling SE^2 = Var(cosh xZ) / (n/2), so the ratio is
+    //
+    //     sqrt(2 Var(cosh xZ) / Var(e^{xZ})),
+    //     Var(cosh xZ) = (1 + e^{2x^2}) / 2 - e^{x^2},
+    //     Var(e^{xZ}) = e^{2x^2} - e^{x^2},
+    //
+    // about x for small x. Here sigma = 0.2 and T = 1, so x = 0.2 and the
+    // ratio is 0.198 (measured 0.197). Treating mirrored paths as
+    // independent would report roughly the plain SE (ratio ~1) instead.
+    // The 0.3 bound is a loose regression check.
+    const PayoffSpec forward_payoff({.exercise_type = ExerciseType::European,
+                                     .maturity = kMaturity,
+                                     .payoff_fn = [](double s) { return s; },
+                                     .currency = "USD"});
+    const auto se_with = [&](bool antithetic) {
+        const auto std_error =
+            OptionValuation(
+                plain_gbm(20'000, antithetic), forward_payoff, PricingMethod::MonteCarlo)
+                .std_error();
+        REQUIRE(std_error.has_value());
+        return std_error.value_or(0.0);
+    };
+    CHECK(se_with(true) < 0.3 * se_with(false));
+}
+
+TEST_CASE("std_error is NaN with a single antithetic pair", "[mc][std_error][edge]") {
+    // One pair is one independent sample, so the ddof = 1 variance is
+    // undefined.
+    const OptionValuation mc(
+        plain_gbm(2, /*antithetic=*/true), spec(OptionType::Call), PricingMethod::MonteCarlo);
+    const auto se = mc.std_error();
+    REQUIRE(se.has_value());
+    CHECK(std::isnan(se.value_or(0.0)));
+}
+
+TEST_CASE("std_error rejects the MC control variate", "[mc][std_error][cv]") {
+    const OptionValuation mc(gbm(20'000),
+                             spec(OptionType::Put, ExerciseType::American),
+                             PricingMethod::MonteCarlo,
+                             MonteCarloParams{.control_variate_european = true});
+    CHECK_THROWS_MATCHES(mc.std_error(),
+                         UnsupportedFeatureError,
+                         message_contains("std_error is not supported with control_variate"));
 }
 
 TEST_CASE("pathwise and LR Greeks agree with BSM analytical", "[mc][greeks]") {

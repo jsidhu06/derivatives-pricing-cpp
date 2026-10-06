@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <random>
 #include <set>
 #include <utility>
@@ -81,24 +82,36 @@ Index resolve_time_index(const std::vector<DateTime>& dates,
     return best;
 }
 
-void warn_if_high_std_error(const ArrayXd& pv_pathwise,
+/// Standard error of the mean of `pv_pathwise`. With antithetic sampling,
+/// path p and its mirror p + n/2 are negatively correlated, so each pair is
+/// averaged into one sample first; treating the 2n values as independent
+/// would misstate the error. Moment matching couples the draws weakly; that
+/// effect is ignored, as is standard. NaN with fewer than two samples.
+double std_error_of_mean(const ArrayXd& pv_pathwise, bool antithetic_pairs) {
+    const Index half = pv_pathwise.size() / 2;
+    const ArrayXd samples = antithetic_pairs
+                                ? ArrayXd(0.5 * (pv_pathwise.head(half) + pv_pathwise.tail(half)))
+                                : pv_pathwise;
+    const Index n = samples.size();
+    if (n < 2) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    const double variance =
+        (samples - samples.mean()).square().sum() / static_cast<double>(n - 1);  // ddof = 1
+    return std::sqrt(variance / static_cast<double>(n));
+}
+
+void warn_if_high_std_error(double std_error,
                             double pv_mean,
+                            Index paths,
                             const MonteCarloParams& params,
                             std::string_view label) {
-    if (!params.std_error_warn_ratio.has_value()) {
+    if (!params.std_error_warn_ratio.has_value() || std::isnan(std_error)) {
         return;
     }
-    const Index n = pv_pathwise.size();
-    if (n < 2) {
-        return;
-    }
-    const double mean = pv_pathwise.mean();
-    const double variance =
-        (pv_pathwise - mean).square().sum() / static_cast<double>(n - 1);  // ddof = 1
-    const double std_error = std::sqrt(variance / static_cast<double>(n));
     const double ratio = std_error / std::max(std::abs(pv_mean), 1.0e-12);
     detail::logger()->debug(
-        "MC {} std_error={:.6g} ratio={:.6g} paths={}", label, std_error, ratio, n);
+        "MC {} std_error={:.6g} ratio={:.6g} paths={}", label, std_error, ratio, paths);
     if (ratio > *params.std_error_warn_ratio) {
         detail::logger()->warn(
             "MC {} standard error high: std_error={:.6g} ratio={:.6g} (>{:.3g}) paths={}",
@@ -106,7 +119,7 @@ void warn_if_high_std_error(const ArrayXd& pv_pathwise,
             std_error,
             ratio,
             *params.std_error_warn_ratio,
-            n);
+            paths);
     }
 }
 
@@ -473,11 +486,37 @@ std::string_view McEngine::std_error_label() const {
     return state_.exercise_type() == ExerciseType::European ? "European" : "American";
 }
 
+const McEngine::Estimate& McEngine::estimate() const {
+    if (!estimate_.has_value()) {
+        const ArrayXd pv_pathwise = present_value_pathwise();
+        const double pv = pv_pathwise.mean();
+        const double std_error =
+            std_error_of_mean(pv_pathwise, antithetic_pairs(pv_pathwise.size()));
+        warn_if_high_std_error(
+            std_error, pv, pv_pathwise.size(), mc_params(state_), std_error_label());
+        estimate_.emplace(Estimate{.mean = pv, .std_error = std_error});
+    }
+    return *estimate_;
+}
+
+bool McEngine::antithetic_pairs(Index paths) const {
+    // Mirrors `PathProcess::draw_normals`: antithetic draws are skipped for
+    // an odd path count and under a correlation context.
+    return paths % 2 == 0 && state_.underlying.visit([](const auto& u) {
+        if constexpr (requires { u.config(); }) {
+            return u.config().antithetic && u.correlation_context() == nullptr;
+        } else {
+            return false;
+        }
+    });
+}
+
 double McEngine::present_value() const {
-    const ArrayXd pv_pathwise = present_value_pathwise();
-    const double pv = pv_pathwise.mean();
-    warn_if_high_std_error(pv_pathwise, pv, mc_params(state_), std_error_label());
-    return pv;
+    return estimate().mean;
+}
+
+std::optional<double> McEngine::std_error() const {
+    return estimate().std_error;
 }
 
 // ── Pathwise / likelihood-ratio Greeks (European vanillas; the facade

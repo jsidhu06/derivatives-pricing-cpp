@@ -22,13 +22,13 @@ engines (with barriers) and implied volatility are in place:
 | Contracts | `dp/contracts.hpp` | `VanillaSpec`, `PayoffSpec`, `BarrierSpec`; `OptionSpec` variant |
 | Params | `dp/params.hpp` | `MonteCarloParams`, `BinomialParams`, `PdeParams` |
 | Underlying | `dp/underlying.hpp` | `UnderlyingData` with `with_*` bump helpers |
-| Valuation | `dp/valuation.hpp` | `OptionValuation` facade: cached PV and Greeks, bump-and-revalue |
+| Valuation | `dp/valuation.hpp` | `OptionValuation` facade: cached PV, Monte Carlo standard error and Greeks, bump-and-revalue |
 | BSM engine | (internal) | closed-form European vanilla PV + analytical Greeks |
 | Barrier engine | (internal) | Reiner-Rubinstein closed forms for all 8 knock-in/out barrier types; Broadie-Glasserman-Kou discrete-monitoring correction; at-hit / at-expiry rebates; PDE-identity theta; barrier-clamped numerical greeks; inception-trigger handling |
 | Binomial engine | (internal) | CRR trees: vanilla + custom payoffs, European/American, escrowed discrete dividends, tree Greeks, arbitrage guard, European control variate; barriers via Boyle-Lau aligned trees (continuous) and half-step placement (discrete), knock-in two-state recursion, rebates, near-barrier greek guards |
 | PDE engine | (internal) | implicit / explicit / explicit-Hull / Rannacher-CN on spot or log-spot grids; PSOR or intrinsic American; dividend jump conditions; affine boundary models; CFL guard; grid Greeks; barriers via grid truncation (continuous KO), monitoring-date resets (discrete), two-surface coupled American knock-ins, and European KI parity |
 | Simulation | `dp/simulation.hpp` | `GbmProcess` / `JdProcess` (Merton) / `SrdProcess` (CIR, full-truncation Euler) + `SimulationConfig`: PCG64 + inverse-CDF normals, antithetic + moment matching, observation-date grids, discrete dividends; `CorrelationContext` for Cholesky-correlated multi-asset draws |
-| MC engine | (internal) | European (discounted terminal payoff) and American (ridge-regularised Laguerre Longstaff-Schwartz); pathwise + likelihood-ratio Greeks; CRN by default; std-error monitor; barriers via pathwise monitoring checks (discrete, any process) and Brownian-bridge crossing probabilities (continuous, GBM), barrier-state LSM with optional barrier-aware basis |
+| MC engine | (internal) | European (discounted terminal payoff) and American (ridge-regularised Laguerre Longstaff-Schwartz); pathwise + likelihood-ratio Greeks; CRN by default; `std_error()` with antithetic pairs averaged, plus a high-error warning; barriers via pathwise monitoring checks (discrete, any process) and Brownian-bridge crossing probabilities (continuous, GBM), barrier-state LSM with optional barrier-aware basis |
 | Implied volatility | `dp/implied_volatility.hpp` | `implied_volatility(target, valuation, params)` for vanillas priced by BSM (European), binomial or PDE (European/American): no-arbitrage bound checks, bracket expansion, Boost.Math safeguarded Newton-Raphson (analytical / numerical vega, bisection fallback), bisection and TOMS 748 |
 
 Engines are verified against the Python reference implementation on golden

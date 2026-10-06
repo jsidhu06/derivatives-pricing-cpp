@@ -711,6 +711,20 @@ double OptionValuation::present_value() const {
     });
 }
 
+std::optional<double> OptionValuation::std_error() const {
+    if (impl_->state.pricing_method == PricingMethod::MonteCarlo &&
+        control_variate_requested(impl_->state.params)) {
+        // The adjusted estimator's error depends on the covariance between
+        // the American and European legs, which the engine alone cannot see.
+        throw UnsupportedFeatureError(
+            "std_error is not supported with control_variate_european for MONTE_CARLO "
+            "pricing.");
+    }
+    // The engine memoises its estimate; the lock serialises it like PV.
+    const std::lock_guard lock(impl_->mutex);
+    return impl_->engine->std_error();
+}
+
 // ── Greeks ──────────────────────────────────────────────────────────
 
 double OptionValuation::delta(GreekOptions options) const {

@@ -29,7 +29,8 @@ using IndexArray = Eigen::Array<Eigen::Index, Eigen::Dynamic, 1>;
 /// dates.
 ///
 /// Extension: subclasses replace the per-path valuation through
-/// `present_value_pathwise()`; `present_value()` averages it and runs the
+/// `present_value_pathwise()`; `present_value()` averages it, `std_error()`
+/// reports the standard error of that mean, and both feed the
 /// standard-error monitor (`McBarrierEngine`).
 ///
 /// Caching: one simulation per engine instance (seeded from
@@ -42,6 +43,7 @@ public:
 
     [[nodiscard]] std::string_view name() const noexcept override { return "MONTE_CARLO"; }
     [[nodiscard]] double present_value() const override;
+    [[nodiscard]] std::optional<double> std_error() const override;
 
     [[nodiscard]] double delta_pathwise() const override;
     [[nodiscard]] double vega_pathwise() const override;
@@ -66,6 +68,17 @@ protected:
     const detail::ValuationState& state_;
 
 private:
+    /// PV and its standard error from one pass over the pathwise values.
+    struct Estimate {
+        double mean;
+        double std_error;
+    };
+
+    [[nodiscard]] const Estimate& estimate() const;
+    /// True when the simulation drew antithetic pairs (path p mirrors
+    /// path p + paths/2).
+    [[nodiscard]] bool antithetic_pairs(Eigen::Index paths) const;
+
     struct Terminal {
         Eigen::ArrayXd spot;  ///< S_T per path.
         Eigen::Index index;   ///< Grid index of maturity.
@@ -80,6 +93,7 @@ private:
     [[nodiscard]] std::pair<double, double> risk_free_and_div_rates(double ttm) const;
 
     mutable std::optional<SimulationResult> simulation_;
+    mutable std::optional<Estimate> estimate_;
 };
 
 /// Barrier extension of the Monte Carlo engine.
