@@ -392,3 +392,56 @@ TEST_CASE("PDE matches the Python reference implementation", "[pde][golden]") {
         CHECK_THAT(ov.rho(kNumerical), close_to(row.rho_num, 1e-7, 1e-9));
     }
 }
+
+// ---------------------------------------------------------------------------
+// PSOR convergence
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// One PSOR sweep per time step: never converges.
+PdeParams starved_psor() {
+    return {.spot_steps = 100,
+            .time_steps = 50,
+            .max_iter = 1,
+            .american_solver = PdeEarlyExercise::GaussSeidel};
+}
+
+BarrierSpec american_down_put(BarrierAction action) {
+    return BarrierSpec({.option_type = OptionType::Put,
+                        .exercise_type = ExerciseType::American,
+                        .strike = 100.0,
+                        .maturity = kMaturity,
+                        .barrier = 85.0,
+                        .direction = BarrierDirection::Down,
+                        .action = action,
+                        .currency = "USD"});
+}
+
+}  // namespace
+
+TEST_CASE("PSOR non-convergence warns instead of passing silently", "[pde][psor]") {
+    SECTION("vanilla") {
+        const dp::test::WarningCapture capture;
+        (void)pde_pv(ud(), spec(OptionType::Put, ExerciseType::American), starved_psor());
+        CHECK(capture.any_contains("PDE: PSOR did not converge within max_iter=1"));
+    }
+    SECTION("barrier knock-out") {
+        const dp::test::WarningCapture capture;
+        (void)pde_pv(ud(), american_down_put(BarrierAction::Out), starved_psor());
+        CHECK(capture.any_contains("PDE barrier: PSOR did not converge"));
+    }
+    SECTION("barrier knock-in (coupled surfaces)") {
+        const dp::test::WarningCapture capture;
+        (void)pde_pv(ud(), american_down_put(BarrierAction::In), starved_psor());
+        CHECK(capture.any_contains("PDE barrier KI: PSOR did not converge"));
+    }
+}
+
+TEST_CASE("PSOR converges silently with the default parameters", "[pde][psor]") {
+    const dp::test::WarningCapture capture;
+    (void)pde_pv(ud(),
+                 spec(OptionType::Put, ExerciseType::American),
+                 PdeParams{.american_solver = PdeEarlyExercise::GaussSeidel});
+    CHECK_FALSE(capture.any_contains("PSOR"));
+}

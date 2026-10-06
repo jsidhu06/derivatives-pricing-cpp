@@ -6,7 +6,6 @@
 #include "dp/exceptions.hpp"
 #include "dp/params.hpp"
 
-#include "detail/log.hpp"
 #include "engines/pde_numerics.hpp"
 
 #include <Eigen/Dense>
@@ -209,10 +208,7 @@ PdeEngine::Solution PdeEngine::compute_vanilla(std::optional<pde::Domain> domain
     ArrayXd v_prev = v;
     double last_dtau = 0.0;
 
-    int psor_steps = 0;
-    long psor_total_iters = 0;
-    int psor_max_iters = 0;
-    int psor_not_converged = 0;
+    pde::PsorStats psor_stats;
 
     for (const auto& step : steps) {
         const double d_tau = step.tau_end - step.tau_start;
@@ -248,25 +244,17 @@ PdeEngine::Solution PdeEngine::compute_vanilla(std::optional<pde::Domain> domain
             v = explicit_step(
                 v_prev, scaled, left, right, intrinsic, implicit_discounting ? r * d_tau : 0.0);
         } else {
-            const auto psor_iters = implicit_cn_step(v_prev,
-                                                     v,
-                                                     scaled,
-                                                     left,
-                                                     right,
-                                                     step.method,
-                                                     intrinsic,
-                                                     params.american_solver,
-                                                     params.omega,
-                                                     params.tol,
-                                                     params.max_iter);
-            if (psor_iters.has_value()) {
-                psor_steps += 1;
-                psor_total_iters += *psor_iters;
-                psor_max_iters = std::max(psor_max_iters, *psor_iters);
-                if (*psor_iters == params.max_iter) {
-                    psor_not_converged += 1;
-                }
-            }
+            psor_stats.record(implicit_cn_step(v_prev,
+                                               v,
+                                               scaled,
+                                               left,
+                                               right,
+                                               step.method,
+                                               intrinsic,
+                                               params.american_solver,
+                                               params.omega,
+                                               params.tol,
+                                               params.max_iter));
         }
 
         if (!dividend_map.empty()) {
@@ -280,13 +268,7 @@ PdeEngine::Solution PdeEngine::compute_vanilla(std::optional<pde::Domain> domain
         }
     }
 
-    if (psor_steps > 0) {
-        detail::logger()->debug("PDE PSOR steps={} avg_iters={:.2f} max_iters={} not_converged={}",
-                                psor_steps,
-                                static_cast<double>(psor_total_iters) / psor_steps,
-                                psor_max_iters,
-                                psor_not_converged);
-    }
+    psor_stats.report("PDE", params.max_iter, params.tol);
 
     // The input spot is cum-dividend: a pricing-date dividend shifts the
     // interpolation point.

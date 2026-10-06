@@ -221,19 +221,39 @@ void check_explicit_spot_stability(const ArrayXd& tau_grid,
                                     const ArrayXd* intrinsic,
                                     double r_dt);
 
+/// Outcome of one projected-SOR solve.
+struct PsorResult {
+    int iterations;
+    bool converged;
+};
+
+/// PSOR iteration counts over one PDE solve: logs them at debug level and
+/// warns when any time step failed to converge.
+class PsorStats {
+public:
+    void record(const std::optional<PsorResult>& result);
+    void report(std::string_view label, int max_iter, double tol) const;
+
+private:
+    int steps_ = 0;
+    long total_iters_ = 0;
+    int max_iters_ = 0;
+    int not_converged_ = 0;
+};
+
 /// One implicit or Crank-Nicolson step, optionally with early exercise.
-/// Returns the PSOR iteration count, or nullopt when PSOR was not used.
-std::optional<int> implicit_cn_step(const ArrayXd& v_prev,
-                                    ArrayXd& v,
-                                    OperatorCoeffs scaled,
-                                    double left,
-                                    double right,
-                                    PdeMethod method,
-                                    const ArrayXd* intrinsic,
-                                    PdeEarlyExercise american_solver,
-                                    double omega,
-                                    double tol,
-                                    int max_iter);
+/// Returns the PSOR outcome, or nullopt when PSOR was not used.
+std::optional<PsorResult> implicit_cn_step(const ArrayXd& v_prev,
+                                           ArrayXd& v,
+                                           OperatorCoeffs scaled,
+                                           double left,
+                                           double right,
+                                           PdeMethod method,
+                                           const ArrayXd* intrinsic,
+                                           PdeEarlyExercise american_solver,
+                                           double omega,
+                                           double tol,
+                                           int max_iter);
 
 // ── Parameters and validation ───────────────────────────────────────
 

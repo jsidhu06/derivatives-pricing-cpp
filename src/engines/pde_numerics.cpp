@@ -37,24 +37,26 @@ double continuation_from_affine(double spot,
 }
 
 /// Projected SOR (Gauss-Seidel with overrelaxation) for American exercise.
-int psor_solve(ArrayXd& x,
-               const ArrayXd& exercise,
-               const ArrayXd& rhs,
-               const ArrayXd& lower,
-               const ArrayXd& diag,
-               const ArrayXd& upper,
-               double v_left,
-               double v_right,
-               double omega,
-               double tol,
-               int max_iter) {
+/// Converged means the largest update fell below `tol`; a solve that
+/// converges on iteration `max_iter` counts as converged.
+PsorResult psor_solve(ArrayXd& x,
+                      const ArrayXd& exercise,
+                      const ArrayXd& rhs,
+                      const ArrayXd& lower,
+                      const ArrayXd& diag,
+                      const ArrayXd& upper,
+                      double v_left,
+                      double v_right,
+                      double omega,
+                      double tol,
+                      int max_iter) {
     const Index n = x.size();
     for (Index k = 0; k < n; ++k) {
         if (x[k] < exercise[k]) {
             x[k] = exercise[k];
         }
     }
-    int iter_used = max_iter;
+    PsorResult result{.iterations = max_iter, .converged = false};
     for (int iter = 0; iter < max_iter; ++iter) {
         double max_diff = 0.0;
         for (Index k = 0; k < n; ++k) {
@@ -70,11 +72,11 @@ int psor_solve(ArrayXd& x,
             max_diff = std::max(max_diff, std::abs(next - old));
         }
         if (max_diff < tol) {
-            iter_used = iter + 1;
+            result = {.iterations = iter + 1, .converged = true};
             break;
         }
     }
-    return iter_used;
+    return result;
 }
 
 /// Non-uniform three-point gamma stencil at index `j`.
@@ -684,17 +686,17 @@ ArrayXd explicit_step(const ArrayXd& v_prev,
     return v_new;
 }
 
-std::optional<int> implicit_cn_step(const ArrayXd& v_prev,
-                                    ArrayXd& v,
-                                    OperatorCoeffs scaled,
-                                    double left,
-                                    double right,
-                                    PdeMethod method,
-                                    const ArrayXd* intrinsic,
-                                    PdeEarlyExercise american_solver,
-                                    double omega,
-                                    double tol,
-                                    int max_iter) {
+std::optional<PsorResult> implicit_cn_step(const ArrayXd& v_prev,
+                                           ArrayXd& v,
+                                           OperatorCoeffs scaled,
+                                           double left,
+                                           double right,
+                                           PdeMethod method,
+                                           const ArrayXd* intrinsic,
+                                           PdeEarlyExercise american_solver,
+                                           double omega,
+                                           double tol,
+                                           int max_iter) {
     const Index m = v_prev.size() - 2;
     if (m < 2) {
         throw ValidationError("spot_steps must be >= 3");
@@ -733,10 +735,45 @@ std::optional<int> implicit_cn_step(const ArrayXd& v_prev,
         v.segment(1, m) = x.max(exercise);
         return std::nullopt;
     }
-    const int iters =
+    const PsorResult result =
         psor_solve(x, exercise, rhs, a, diag, c, v[0], v[v.size() - 1], omega, tol, max_iter);
     v.segment(1, m) = x;
-    return iters;
+    return result;
+}
+
+void PsorStats::record(const std::optional<PsorResult>& result) {
+    if (!result.has_value()) {
+        return;
+    }
+    steps_ += 1;
+    total_iters_ += result->iterations;
+    max_iters_ = std::max(max_iters_, result->iterations);
+    if (!result->converged) {
+        not_converged_ += 1;
+    }
+}
+
+void PsorStats::report(std::string_view label, int max_iter, double tol) const {
+    if (steps_ == 0) {
+        return;
+    }
+    detail::logger()->debug("{} PSOR steps={} avg_iters={:.2f} max_iters={} not_converged={}",
+                            label,
+                            steps_,
+                            static_cast<double>(total_iters_) / steps_,
+                            max_iters_,
+                            not_converged_);
+    if (not_converged_ > 0) {
+        warn(std::format(
+            "{}: PSOR did not converge within max_iter={} (tol={}) on {} of {} time steps; the "
+            "American price may be inaccurate. Increase max_iter, or use "
+            "american_solver=PdeEarlyExercise::Intrinsic.",
+            label,
+            max_iter,
+            tol,
+            not_converged_,
+            steps_));
+    }
 }
 
 // ── Parameters and validation ───────────────────────────────────────

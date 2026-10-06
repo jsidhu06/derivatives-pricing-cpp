@@ -7,7 +7,6 @@
 #include "dp/params.hpp"
 
 #include "detail/barrier.hpp"
-#include "detail/log.hpp"
 #include "engines/pde_numerics.hpp"
 
 #include <Eigen/Dense>
@@ -511,10 +510,7 @@ PdeEngine::Solution PdeBarrierEngine::compute_barrier_knock_out() const {
 
     ArrayXd v_prev = v;
     double last_dtau = 0.0;
-    int psor_steps = 0;
-    long psor_total_iters = 0;
-    int psor_max_iters = 0;
-    int psor_not_converged = 0;
+    pde::PsorStats psor_stats;
 
     for (const auto& step : steps) {
         const double d_tau = step.tau_end - step.tau_start;
@@ -587,25 +583,17 @@ PdeEngine::Solution PdeBarrierEngine::compute_barrier_knock_out() const {
             v = explicit_step(
                 v_prev, scaled, left, right, intrinsic, implicit_discounting ? r * d_tau : 0.0);
         } else {
-            const auto psor_iters = implicit_cn_step(v_prev,
-                                                     v,
-                                                     scaled,
-                                                     left,
-                                                     right,
-                                                     step.method,
-                                                     intrinsic,
-                                                     params.american_solver,
-                                                     params.omega,
-                                                     params.tol,
-                                                     params.max_iter);
-            if (psor_iters.has_value()) {
-                psor_steps += 1;
-                psor_total_iters += *psor_iters;
-                psor_max_iters = std::max(psor_max_iters, *psor_iters);
-                if (*psor_iters == params.max_iter) {
-                    psor_not_converged += 1;
-                }
-            }
+            psor_stats.record(implicit_cn_step(v_prev,
+                                               v,
+                                               scaled,
+                                               left,
+                                               right,
+                                               step.method,
+                                               intrinsic,
+                                               params.american_solver,
+                                               params.omega,
+                                               params.tol,
+                                               params.max_iter));
         }
 
         if (!dividend_map.empty()) {
@@ -636,14 +624,7 @@ PdeEngine::Solution PdeBarrierEngine::compute_barrier_knock_out() const {
         }
     }
 
-    if (psor_steps > 0) {
-        detail::logger()->debug(
-            "PDE barrier PSOR steps={} avg_iters={:.2f} max_iters={} not_converged={}",
-            psor_steps,
-            static_cast<double>(psor_total_iters) / psor_steps,
-            psor_max_iters,
-            psor_not_converged);
-    }
+    psor_stats.report("PDE barrier", params.max_iter, params.tol);
 
     const double interp_spot = spot - pricing_div.value_or(0.0);
     const double price = interp_linear(interp_spot, S, v);
@@ -790,10 +771,7 @@ PdeEngine::Solution PdeBarrierEngine::compute_barrier_knock_in() const {
     ArrayXd v_act_prev = v_act;
     ArrayXd v_inact_prev = v_inact;
     double last_dtau = 0.0;
-    int psor_steps = 0;
-    long psor_total_iters = 0;
-    int psor_max_iters = 0;
-    int psor_not_converged = 0;
+    pde::PsorStats psor_stats;
 
     for (const auto& step : steps) {
         const double d_tau = step.tau_end - step.tau_start;
@@ -831,25 +809,17 @@ PdeEngine::Solution PdeBarrierEngine::compute_barrier_knock_in() const {
         if (step.method == PdeMethod::Explicit || step.method == PdeMethod::ExplicitHull) {
             v_act = explicit_step(v_act_prev, scaled, left, right, intrinsic, r_dt);
         } else {
-            const auto psor_iters = implicit_cn_step(v_act_prev,
-                                                     v_act,
-                                                     scaled,
-                                                     left,
-                                                     right,
-                                                     step.method,
-                                                     intrinsic,
-                                                     params.american_solver,
-                                                     params.omega,
-                                                     params.tol,
-                                                     params.max_iter);
-            if (psor_iters.has_value()) {
-                psor_steps += 1;
-                psor_total_iters += *psor_iters;
-                psor_max_iters = std::max(psor_max_iters, *psor_iters);
-                if (*psor_iters == params.max_iter) {
-                    psor_not_converged += 1;
-                }
-            }
+            psor_stats.record(implicit_cn_step(v_act_prev,
+                                               v_act,
+                                               scaled,
+                                               left,
+                                               right,
+                                               step.method,
+                                               intrinsic,
+                                               params.american_solver,
+                                               params.omega,
+                                               params.tol,
+                                               params.max_iter));
         }
 
         // Step B: inactive surface (pure continuation, no exercise).
@@ -936,14 +906,7 @@ PdeEngine::Solution PdeBarrierEngine::compute_barrier_knock_in() const {
         }
     }
 
-    if (psor_steps > 0) {
-        detail::logger()->debug(
-            "PDE barrier KI PSOR steps={} avg_iters={:.2f} max_iters={} not_converged={}",
-            psor_steps,
-            static_cast<double>(psor_total_iters) / psor_steps,
-            psor_max_iters,
-            psor_not_converged);
-    }
+    psor_stats.report("PDE barrier KI", params.max_iter, params.tol);
 
     // Price from the inactive surface: the option starts inactive.
     const double interp_spot = spot - pricing_div.value_or(0.0);
