@@ -24,8 +24,8 @@ std::string_view to_string(ExerciseType value) noexcept {
 
 std::string_view to_string(PricingMethod value) noexcept {
     switch (value) {
-        case PricingMethod::Bsm:
-            return "bsm";
+        case PricingMethod::Analytical:
+            return "analytical";
         case PricingMethod::Binomial:
             return "binomial";
         case PricingMethod::PdeFd:
@@ -156,8 +156,8 @@ std::string_view to_string(RebateTiming value) noexcept {
 
 std::string_view name(PricingMethod value) noexcept {
     switch (value) {
-        case PricingMethod::Bsm:
-            return "BSM";
+        case PricingMethod::Analytical:
+            return "ANALYTICAL";
         case PricingMethod::Binomial:
             return "BINOMIAL";
         case PricingMethod::PdeFd:

@@ -57,10 +57,10 @@ const UnderlyingData& require_supported(const OptionValuation& valuation) {
             "guaranteed to be monotonic in sigma.");
     }
     switch (valuation.pricing_method()) {
-        case PricingMethod::Bsm:
+        case PricingMethod::Analytical:
             if (valuation.exercise_type() != ExerciseType::European) {
                 throw UnsupportedFeatureError(
-                    "BSM implied volatility supports European options only.");
+                    "ANALYTICAL implied volatility supports European options only.");
             }
             break;
         case PricingMethod::Binomial:
@@ -68,7 +68,8 @@ const UnderlyingData& require_supported(const OptionValuation& valuation) {
             break;
         case PricingMethod::MonteCarlo:
             throw UnsupportedFeatureError(
-                "Implied volatility supports BSM, BINOMIAL, or PDE_FD pricing methods only.");
+                "Implied volatility supports ANALYTICAL, BINOMIAL, or PDE_FD pricing "
+                "methods only.");
     }
     const auto* underlying = std::get_if<UnderlyingData>(&valuation.underlying());
     if (underlying == nullptr) {
@@ -233,7 +234,7 @@ ImpliedVolResult implied_volatility(double target_price,
     double initial = 0.0;
     if (params.initial_vol.has_value()) {
         initial = *params.initial_vol;
-    } else if (method == PricingMethod::Bsm) {
+    } else if (method == PricingMethod::Analytical) {
         initial = underlying.volatility() > 0.0 ? underlying.volatility() : 0.2;
     } else {
         initial = heuristic_initial_vol(valuation, underlying, target_price, low, high);
@@ -262,7 +263,7 @@ ImpliedVolResult implied_volatility(double target_price,
             // BSM, bump-and-revalue otherwise, rescaled from per-1% to per-1.0.
             // Empty when Newton fails to reprice within tol.
             const auto newton = [&]() -> std::optional<ImpliedVolResult> {
-                const GreekCalculationMethod vega_method = method == PricingMethod::Bsm
+                const GreekCalculationMethod vega_method = method == PricingMethod::Analytical
                                                                ? GreekCalculationMethod::Analytical
                                                                : GreekCalculationMethod::Numerical;
                 // Remember the last evaluation: Boost returns the point it

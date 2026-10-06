@@ -90,7 +90,7 @@ TEST_CASE("binomial barriers agree with the analytical engine", "[barrier][binom
     auto params = base_params(barrier, direction, action, type);
     const double tree_pv = binomial(ud(), params).present_value();
     const double analytic_pv =
-        OptionValuation(ud(), BarrierSpec(params), PricingMethod::Bsm).present_value();
+        OptionValuation(ud(), BarrierSpec(params), PricingMethod::Analytical).present_value();
 
     // Loose sanity sweep across all 8 types at 500 base steps — bit-exact
     // parity with the Python trees is asserted by the golden table below,

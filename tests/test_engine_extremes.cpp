@@ -75,7 +75,7 @@ double pv(const UnderlyingData& u,
 }
 
 double bsm_pv(const UnderlyingData& u, const OptionSpec& s) {
-    return OptionValuation(u, s, PricingMethod::Bsm).present_value();
+    return OptionValuation(u, s, PricingMethod::Analytical).present_value();
 }
 
 double tree_pv(const UnderlyingData& u, const OptionSpec& s, int num_steps) {
@@ -424,7 +424,7 @@ TEST_CASE("auto PDE domain: refinement, Greeks and very short maturities", "[pde
     }
     SECTION("1-day ATM delta, gamma and theta match BSM") {
         const OptionValuation pde(u, s, PricingMethod::PdeFd, PdeParams{.space_grid = grid});
-        const OptionValuation closed(u, s, PricingMethod::Bsm);
+        const OptionValuation closed(u, s, PricingMethod::Analytical);
         CHECK_THAT(pde.delta(), WithinRel(closed.delta(), 2e-3));  // measured <= 7e-4
         CHECK_THAT(pde.gamma(), WithinRel(closed.gamma(), 2e-3));
         CHECK_THAT(pde.theta(), WithinRel(closed.theta(), 2e-3));

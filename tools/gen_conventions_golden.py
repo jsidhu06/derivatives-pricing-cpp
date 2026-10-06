@@ -38,7 +38,7 @@ DCC = {
     "ACT365_25": dp.DayCountConvention.ACT_365_25,
     "THIRTY360": dp.DayCountConvention.THIRTY_360_US,
 }
-ENGINE = {"BSM": dp.PricingMethod.BSM, "TREE": dp.PricingMethod.BINOMIAL,
+ENGINE = {"BSM": dp.PricingMethod.ANALYTICAL, "TREE": dp.PricingMethod.BINOMIAL,
           "PDE": dp.PricingMethod.PDE_FD}
 DIRECTION = {"U": dp.BarrierDirection.UP, "D": dp.BarrierDirection.DOWN}
 ACTION = {"I": dp.BarrierAction.IN, "O": dp.BarrierAction.OUT}

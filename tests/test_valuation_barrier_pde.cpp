@@ -78,7 +78,7 @@ TEST_CASE("PDE barriers agree with the analytical engine", "[barrier][pde]") {
     auto params = base_params(barrier, direction, action, type);
     const double pde_pv = pde(ud(), params).present_value();
     const double analytic_pv =
-        OptionValuation(ud(), BarrierSpec(params), PricingMethod::Bsm).present_value();
+        OptionValuation(ud(), BarrierSpec(params), PricingMethod::Analytical).present_value();
 
     // Continuous barriers on a truncated grid: Python's paper-table PDE
     // tolerance (rtol 2e-4 .. 4e-3 depending on the case) motivates 5e-3.

@@ -39,7 +39,7 @@ def row(label, *, spot, strike, rate, div_yield, vol, maturity_days, option_type
         option_type=option_type, exercise_type=dp.ExerciseType.EUROPEAN,
         strike=strike, maturity=maturity,
     )
-    ov = dp.OptionValuation(ud, spec, dp.PricingMethod.BSM)
+    ov = dp.OptionValuation(ud, spec, dp.PricingMethod.ANALYTICAL)
     values = [
         ov.present_value(),
         ov.delta(), ov.gamma(), ov.vega(), ov.theta(), ov.rho(),

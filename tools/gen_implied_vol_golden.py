@@ -22,7 +22,7 @@ import derivatives_pricing as dp
 PRICING_DATE = dt.datetime(2025, 1, 1)
 SOLVER = {"NR": dp.ImpliedVolMethod.NEWTON_RAPHSON, "BI": dp.ImpliedVolMethod.BISECTION,
           "BR": dp.ImpliedVolMethod.BRENTQ}
-ENGINE = {"BSM": dp.PricingMethod.BSM, "TREE": dp.PricingMethod.BINOMIAL,
+ENGINE = {"BSM": dp.PricingMethod.ANALYTICAL, "TREE": dp.PricingMethod.BINOMIAL,
           "PDE": dp.PricingMethod.PDE_FD}
 TREE_STEPS = 200
 PDE_SPOT_STEPS = 80

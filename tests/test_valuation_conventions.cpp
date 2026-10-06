@@ -108,7 +108,7 @@ PricingMethod engine_of(const char* code) {
     if (is(code, "PDE")) {
         return PricingMethod::PdeFd;
     }
-    return PricingMethod::Bsm;
+    return PricingMethod::Analytical;
 }
 
 DayCountConvention dcc_of(const char* code) {
@@ -270,7 +270,7 @@ TEST_CASE("tree and PDE converge to BSM under term-structure curves", "[valuatio
                          Case{"inv", "q_up", OptionType::Call}}) {
         INFO(c.rates << " / " << c.dividends << " " << to_string(c.type));
         const double bsm =
-            term_vanilla(PricingMethod::Bsm, c.rates, c.dividends, c.type).present_value();
+            term_vanilla(PricingMethod::Analytical, c.rates, c.dividends, c.type).present_value();
         const double tree = term_vanilla(PricingMethod::Binomial,
                                          c.rates,
                                          c.dividends,
@@ -322,7 +322,7 @@ TEST_CASE("Monte Carlo integrates a term curve under ACT/360 like BSM",
                             .currency = "USD"});
     const double bsm =
         OptionValuation(
-            UnderlyingData(100.0, 0.25, market, {}, curve("q_up")), spec, PricingMethod::Bsm)
+            UnderlyingData(100.0, 0.25, market, {}, curve("q_up")), spec, PricingMethod::Analytical)
             .present_value();
     const GbmProcess gbm(
         market,
@@ -338,7 +338,8 @@ TEST_CASE("Monte Carlo integrates a term curve under ACT/360 like BSM",
 TEST_CASE("ACT/360 prices above ACT/365F on the same dates", "[valuation][conventions]") {
     // The same calendar span is a longer year fraction under ACT/360, so an
     // at-the-money option carries more time value.
-    for (const auto method : {PricingMethod::Bsm, PricingMethod::Binomial, PricingMethod::PdeFd}) {
+    for (const auto method :
+         {PricingMethod::Analytical, PricingMethod::Binomial, PricingMethod::PdeFd}) {
         for (const auto type : {OptionType::Call, OptionType::Put}) {
             INFO(to_string(method) << " " << to_string(type));
             const auto pv = [&](DayCountConvention dcc) {

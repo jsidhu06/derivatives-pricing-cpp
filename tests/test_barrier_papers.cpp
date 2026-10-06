@@ -98,13 +98,14 @@ BarrierSpec doc_spec(double strike,
                         .num_observations = observations});
 }
 
-constexpr std::array kAllEngines{PricingMethod::Bsm, PricingMethod::Binomial, PricingMethod::PdeFd};
+constexpr std::array kAllEngines{
+    PricingMethod::Analytical, PricingMethod::Binomial, PricingMethod::PdeFd};
 constexpr std::array kNumericalEngines{PricingMethod::Binomial, PricingMethod::PdeFd};
 
 /// Index of `method` in kAllEngines (tolerance tables follow that order).
 std::size_t engine_slot(PricingMethod method) {
     switch (method) {
-        case PricingMethod::Bsm:
+        case PricingMethod::Analytical:
             return 0;
         case PricingMethod::Binomial:
             return 1;
@@ -523,7 +524,8 @@ TEST_CASE("Broadie-Glasserman Table 2.1: discrete DOC PVs", "[barrier][paper][sl
 
     for (const auto method : kAllEngines) {
         INFO("H " << row.barrier << " " << to_string(method));
-        const double reference = method == PricingMethod::Bsm ? row.pv_corrected : row.pv_true;
+        const double reference =
+            method == PricingMethod::Analytical ? row.pv_corrected : row.pv_true;
         const Tol tol = kTols[engine_slot(method)];
         CHECK_THAT(engine_value(pvs[engine_slot(method)]), close_to(reference, tol.rtol, tol.atol));
     }
@@ -550,7 +552,7 @@ TEST_CASE("Broadie-Glasserman Table 2.4: discrete DOC deltas", "[barrier][paper]
     for (const auto method : kAllEngines) {
         INFO("H " << row.barrier << " " << to_string(method));
         const double reference =
-            method == PricingMethod::Bsm ? row.delta_corrected : row.delta_true;
+            method == PricingMethod::Analytical ? row.delta_corrected : row.delta_true;
         const Tol tol = kTols[engine_slot(method)];
         CHECK_THAT(engine_value(deltas[engine_slot(method)]),
                    close_to(reference, tol.rtol, tol.atol));

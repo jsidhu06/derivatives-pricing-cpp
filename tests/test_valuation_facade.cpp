@@ -53,11 +53,11 @@ VanillaSpec vanilla(OptionType type = OptionType::Call,
 // ---------------------------------------------------------------------------
 
 TEST_CASE("OptionValuation exposes its inputs", "[valuation]") {
-    const OptionValuation ov(ud(), vanilla(), PricingMethod::Bsm);
+    const OptionValuation ov(ud(), vanilla(), PricingMethod::Analytical);
     CHECK(ov.strike() == 100.0);
     CHECK(ov.option_type() == OptionType::Call);
     CHECK(ov.exercise_type() == ExerciseType::European);
-    CHECK(ov.pricing_method() == PricingMethod::Bsm);
+    CHECK(ov.pricing_method() == PricingMethod::Analytical);
     CHECK(ov.maturity() == kMaturity);
     CHECK(ov.pricing_date() == kPricingDate);
     CHECK(ov.currency() == "USD");
@@ -70,8 +70,9 @@ TEST_CASE("OptionValuation exposes its inputs", "[valuation]") {
 
 TEST_CASE("OptionValuation inherits the underlying currency when the spec has none",
           "[valuation]") {
-    const OptionValuation ov(
-        ud(), vanilla(OptionType::Call, ExerciseType::European, std::nullopt), PricingMethod::Bsm);
+    const OptionValuation ov(ud(),
+                             vanilla(OptionType::Call, ExerciseType::European, std::nullopt),
+                             PricingMethod::Analytical);
     CHECK(ov.currency() == "USD");
 }
 
@@ -79,35 +80,35 @@ TEST_CASE("OptionValuation rejects maturity on or before the pricing date", "[va
     CHECK_THROWS_MATCHES(
         OptionValuation(ud(),
                         vanilla(OptionType::Call, ExerciseType::European, "USD", kPricingDate),
-                        PricingMethod::Bsm),
+                        PricingMethod::Analytical),
         ValidationError,
         message_contains("Option maturity must be after pricing_date"));
 }
 
 TEST_CASE("OptionValuation rejects cross-currency specs", "[valuation]") {
-    CHECK_THROWS_MATCHES(
-        OptionValuation(
-            ud(), vanilla(OptionType::Call, ExerciseType::European, "EUR"), PricingMethod::Bsm),
-        UnsupportedFeatureError,
-        message_contains("Cross-currency valuation is not supported"));
+    CHECK_THROWS_MATCHES(OptionValuation(ud(),
+                                         vanilla(OptionType::Call, ExerciseType::European, "EUR"),
+                                         PricingMethod::Analytical),
+                         UnsupportedFeatureError,
+                         message_contains("Cross-currency valuation is not supported"));
 }
 
 TEST_CASE("BSM rejects American exercise at construction", "[valuation]") {
     CHECK_THROWS_MATCHES(
         OptionValuation(
-            ud(), vanilla(OptionType::Call, ExerciseType::American), PricingMethod::Bsm),
+            ud(), vanilla(OptionType::Call, ExerciseType::American), PricingMethod::Analytical),
         UnsupportedFeatureError,
-        message_contains("BSM is only applicable to European"));
+        message_contains("ANALYTICAL is only applicable to European"));
 }
 
-TEST_CASE("BSM rejects PayoffSpec", "[valuation]") {
+TEST_CASE("ANALYTICAL rejects PayoffSpec", "[valuation]") {
     const PayoffSpec spec({.exercise_type = ExerciseType::European,
                            .maturity = kMaturity,
                            .payoff_fn = [](double s) { return s > 100.0 ? s - 100.0 : 0.0; },
                            .currency = "USD"});
-    CHECK_THROWS_MATCHES(OptionValuation(ud(), spec, PricingMethod::Bsm),
+    CHECK_THROWS_MATCHES(OptionValuation(ud(), spec, PricingMethod::Analytical),
                          UnsupportedFeatureError,
-                         message_contains("BSM"));
+                         message_contains("ANALYTICAL pricing requires a CALL or PUT"));
 }
 
 TEST_CASE("Monte Carlo requires a path simulation", "[valuation]") {
@@ -117,9 +118,10 @@ TEST_CASE("Monte Carlo requires a path simulation", "[valuation]") {
 }
 
 TEST_CASE("params must match the pricing method", "[valuation]") {
-    CHECK_THROWS_MATCHES(OptionValuation(ud(), vanilla(), PricingMethod::Bsm, BinomialParams{}),
-                         ConfigurationError,
-                         message_contains("pricing_method=BSM does not accept valuation params"));
+    CHECK_THROWS_MATCHES(
+        OptionValuation(ud(), vanilla(), PricingMethod::Analytical, BinomialParams{}),
+        ConfigurationError,
+        message_contains("pricing_method=ANALYTICAL does not accept valuation params"));
     CHECK_THROWS_MATCHES(
         OptionValuation(ud(), vanilla(), PricingMethod::Binomial, MonteCarloParams{}),
         ConfigurationError,
@@ -135,9 +137,9 @@ TEST_CASE("params must match the pricing method", "[valuation]") {
 }
 
 TEST_CASE("describe() summarises the valuation", "[valuation]") {
-    const OptionValuation ov(ud(), vanilla(), PricingMethod::Bsm);
+    const OptionValuation ov(ud(), vanilla(), PricingMethod::Analytical);
     const auto text = ov.describe();
-    CHECK_THAT(text, ContainsSubstring("OptionValuation(BSM, EUROPEAN, CALL"));
+    CHECK_THAT(text, ContainsSubstring("OptionValuation(ANALYTICAL, EUROPEAN, CALL"));
     CHECK_THAT(text, ContainsSubstring("S=100"));
     CHECK_THAT(text, ContainsSubstring("K=100"));
     CHECK_THAT(text, ContainsSubstring("T=2026-01-01"));
@@ -146,7 +148,7 @@ TEST_CASE("describe() summarises the valuation", "[valuation]") {
 }
 
 TEST_CASE("OptionValuation is movable", "[valuation]") {
-    OptionValuation a(ud(), vanilla(), PricingMethod::Bsm);
+    OptionValuation a(ud(), vanilla(), PricingMethod::Analytical);
     const double pv = a.present_value();
     OptionValuation b(std::move(a));
     CHECK(b.present_value() == pv);
@@ -161,7 +163,7 @@ TEST_CASE("OptionValuation is movable", "[valuation]") {
 // ---------------------------------------------------------------------------
 
 TEST_CASE("explicit Greek methods are validated against the engine", "[valuation][greeks]") {
-    const OptionValuation ov(ud(), vanilla(), PricingMethod::Bsm);
+    const OptionValuation ov(ud(), vanilla(), PricingMethod::Analytical);
     CHECK_THROWS_MATCHES(ov.delta({.method = GreekCalculationMethod::Tree}),
                          ValidationError,
                          message_contains("Tree greeks are only available for BINOMIAL"));
@@ -181,15 +183,16 @@ TEST_CASE("explicit Greek methods are validated against the engine", "[valuation
     for (const auto method : {PricingMethod::Binomial, PricingMethod::PdeFd}) {
         INFO(to_string(method));
         const OptionValuation numerical_engine(ud(), vanilla(), method);
-        CHECK_THROWS_MATCHES(numerical_engine.delta({.method = GreekCalculationMethod::Analytical}),
-                             ValidationError,
-                             message_contains("Analytical greeks are only available for BSM"));
+        CHECK_THROWS_MATCHES(
+            numerical_engine.delta({.method = GreekCalculationMethod::Analytical}),
+            ValidationError,
+            message_contains("Analytical greeks are only available for ANALYTICAL"));
     }
 }
 
 TEST_CASE("a bump is rejected for non-bumping methods and must be positive",
           "[valuation][greeks]") {
-    const OptionValuation ov(ud(), vanilla(), PricingMethod::Bsm);
+    const OptionValuation ov(ud(), vanilla(), PricingMethod::Analytical);
     CHECK_THROWS_MATCHES(ov.delta({.bump = 0.5}),
                          ValidationError,
                          message_contains("does not use a finite-difference bump"));
@@ -212,7 +215,7 @@ TEST_CASE("a bump is rejected for non-bumping methods and must be positive",
 // ---------------------------------------------------------------------------
 
 TEST_CASE("repeated calls are cached and distinct bumps cache separately", "[valuation][cache]") {
-    const OptionValuation ov(ud(), vanilla(), PricingMethod::Bsm);
+    const OptionValuation ov(ud(), vanilla(), PricingMethod::Analytical);
     const double pv = ov.present_value();
     CHECK(ov.present_value() == pv);
 
@@ -228,7 +231,7 @@ TEST_CASE("repeated calls are cached and distinct bumps cache separately", "[val
 }
 
 TEST_CASE("concurrent queries on one instance agree", "[valuation][cache][threads]") {
-    const OptionValuation ov(ud(), vanilla(), PricingMethod::Bsm);
+    const OptionValuation ov(ud(), vanilla(), PricingMethod::Analytical);
     const GreekOptions num{.method = GreekCalculationMethod::Numerical};
 
     std::vector<double> results(16);
@@ -255,7 +258,7 @@ TEST_CASE("concurrent queries on one instance agree", "[valuation][cache][thread
 TEST_CASE("pricing and Greeks do not mutate the underlying", "[valuation][purity]") {
     const auto q_curve = flat_curve(kPricingDate, kMaturity, 0.02);
     const UnderlyingData underlying(100.0, 0.2, md(), {}, q_curve);
-    const OptionValuation ov(underlying, vanilla(), PricingMethod::Bsm);
+    const OptionValuation ov(underlying, vanilla(), PricingMethod::Analytical);
 
     const GreekOptions num{.method = GreekCalculationMethod::Numerical};
     (void)ov.present_value();

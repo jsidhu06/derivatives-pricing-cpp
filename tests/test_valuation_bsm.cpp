@@ -57,11 +57,11 @@ VanillaSpec spec(OptionType type = OptionType::Call,
 }
 
 double pv(const UnderlyingData& u, const VanillaSpec& s) {
-    return OptionValuation(u, s, PricingMethod::Bsm).present_value();
+    return OptionValuation(u, s, PricingMethod::Analytical).present_value();
 }
 
 OptionValuation bsm(const UnderlyingData& u, const VanillaSpec& s) {
-    return {u, s, PricingMethod::Bsm};
+    return {u, s, PricingMethod::Analytical};
 }
 
 constexpr GreekOptions kNumerical{.method = GreekCalculationMethod::Numerical};
@@ -312,7 +312,7 @@ OptionValuation replay(const BsmGoldenRow& row) {
                          .exercise_type = ExerciseType::European,
                          .strike = row.strike,
                          .maturity = maturity});
-    return {u, s, PricingMethod::Bsm};
+    return {u, s, PricingMethod::Analytical};
 }
 
 }  // namespace

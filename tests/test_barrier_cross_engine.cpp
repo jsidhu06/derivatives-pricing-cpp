@@ -79,7 +79,7 @@ VanillaSpec vanilla(OptionType type) {
 }
 
 double bsm_pv(const UnderlyingData& u, const BarrierSpec::Params& params) {
-    return OptionValuation(u, BarrierSpec(params), PricingMethod::Bsm).present_value();
+    return OptionValuation(u, BarrierSpec(params), PricingMethod::Analytical).present_value();
 }
 
 struct Parity {
@@ -122,21 +122,22 @@ TEST_CASE("analytical in/out parity holds beyond the base cases", "[barrier][par
         const auto direction = GENERATE(BarrierDirection::Down, BarrierDirection::Up);
         const double level = direction == BarrierDirection::Down ? 110.0 : 90.0;
         CAPTURE(to_string(type), level);
-        const auto p =
-            parity(ud(), barrier(level, direction, BarrierAction::In, type), PricingMethod::Bsm);
+        const auto p = parity(
+            ud(), barrier(level, direction, BarrierAction::In, type), PricingMethod::Analytical);
         CHECK_THAT(p.knock_in + p.knock_out, close_to(p.vanilla, 1e-10, 0.0));
     }
     SECTION("across volatilities") {
         const double vol = GENERATE(0.10, 0.30, 0.50);
         CAPTURE(vol);
-        const auto p = parity(
-            ud(vol), barrier(120.0, BarrierDirection::Up, BarrierAction::In), PricingMethod::Bsm);
+        const auto p = parity(ud(vol),
+                              barrier(120.0, BarrierDirection::Up, BarrierAction::In),
+                              PricingMethod::Analytical);
         CHECK_THAT(p.knock_in + p.knock_out, close_to(p.vanilla, 1e-10, 0.0));
     }
     SECTION("under the BGK discrete correction") {
         const auto p = parity(ud(),
                               discrete(barrier(120.0, BarrierDirection::Up, BarrierAction::In), 50),
-                              PricingMethod::Bsm);
+                              PricingMethod::Analytical);
         CHECK_THAT(p.knock_in + p.knock_out, close_to(p.vanilla, 1e-10, 0.0));
     }
 }

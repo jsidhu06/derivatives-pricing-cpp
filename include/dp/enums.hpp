@@ -15,7 +15,10 @@ enum class OptionType { Call, Put };
 enum class ExerciseType { European, American };
 
 /// Numerical method used by the valuation facade to price an option.
-enum class PricingMethod { Bsm, Binomial, PdeFd, MonteCarlo };
+/// `Analytical` is closed-form pricing under GBM dynamics: Black-Scholes-Merton
+/// for vanillas, Reiner-Rubinstein (with the Broadie-Glasserman-Kou discrete
+/// correction) for barriers.
+enum class PricingMethod { Analytical, Binomial, PdeFd, MonteCarlo };
 
 /// Algorithm used to compute Greeks. Not every method is available for every
 /// pricing engine; the valuation facade validates the combination.
@@ -69,7 +72,7 @@ enum class RebateTiming { AtHit, AtExpiry };
 [[nodiscard]] std::string_view to_string(BarrierMonitoring value) noexcept;
 [[nodiscard]] std::string_view to_string(RebateTiming value) noexcept;
 
-/// Upper-case identifier (`BSM`, `PDE_FD`, `MONTE_CARLO`, ...) matching the
+/// Upper-case identifier (`ANALYTICAL`, `PDE_FD`, `MONTE_CARLO`, ...) matching the
 /// Python reference library's `Enum.name`. Used in diagnostics.
 [[nodiscard]] std::string_view name(PricingMethod value) noexcept;
 [[nodiscard]] std::string_view name(ExerciseType value) noexcept;

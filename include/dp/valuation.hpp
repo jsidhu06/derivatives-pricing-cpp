@@ -118,8 +118,8 @@ public:
     [[nodiscard]] double maturity_year_fraction() const;
 
     /// One-line description, e.g.
-    /// `OptionValuation(BSM, EUROPEAN, CALL, S=100, K=105, T=2025-07-01, pricing_date=2025-01-01,
-    /// VanillaSpec)`.
+    /// `OptionValuation(ANALYTICAL, EUROPEAN, CALL, S=100, K=105, T=2025-07-01,
+    /// pricing_date=2025-01-01, VanillaSpec)`.
     [[nodiscard]] std::string describe() const;
 
 private:

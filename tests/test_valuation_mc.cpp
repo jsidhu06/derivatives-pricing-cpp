@@ -142,7 +142,7 @@ TEST_CASE("odd path count downgrades antithetic with a warning", "[mc][simulatio
 TEST_CASE("MC European agrees with BSM", "[mc]") {
     const auto type = GENERATE(OptionType::Call, OptionType::Put);
     const UnderlyingData ud(100.0, 0.20, md());
-    const OptionValuation bsm(ud, spec(type), PricingMethod::Bsm);
+    const OptionValuation bsm(ud, spec(type), PricingMethod::Analytical);
     const OptionValuation mc(gbm(200'000), spec(type), PricingMethod::MonteCarlo);
     CHECK_THAT(mc.present_value(), WithinRel(bsm.present_value(), 1e-2));
 }
@@ -153,7 +153,8 @@ TEST_CASE("MC European agrees with BSM", "[mc]") {
 
 TEST_CASE("std_error is reported for Monte Carlo only, and memoised", "[mc][std_error]") {
     const UnderlyingData ud(100.0, 0.20, md());
-    for (const auto method : {PricingMethod::Bsm, PricingMethod::Binomial, PricingMethod::PdeFd}) {
+    for (const auto method :
+         {PricingMethod::Analytical, PricingMethod::Binomial, PricingMethod::PdeFd}) {
         CHECK(OptionValuation(ud, spec(OptionType::Call), method).std_error() == std::nullopt);
     }
     const OptionValuation mc(gbm(20'000), spec(OptionType::Call), PricingMethod::MonteCarlo);
@@ -229,7 +230,7 @@ TEST_CASE("MC European sits within a few standard errors of BSM", "[mc][std_erro
     // Default MC settings (antithetic + moment matching) across seeds.
     const UnderlyingData ud(100.0, 0.20, md());
     const double bsm =
-        OptionValuation(ud, spec(OptionType::Call), PricingMethod::Bsm).present_value();
+        OptionValuation(ud, spec(OptionType::Call), PricingMethod::Analytical).present_value();
     for (unsigned long long seed = 1000; seed < 1005; ++seed) {
         const OptionValuation mc(gbm(20'000),
                                  spec(OptionType::Call),
@@ -294,7 +295,7 @@ TEST_CASE("std_error rejects the MC control variate", "[mc][std_error][cv]") {
 TEST_CASE("pathwise and LR Greeks agree with BSM analytical", "[mc][greeks]") {
     const auto type = GENERATE(OptionType::Call, OptionType::Put);
     const UnderlyingData ud(100.0, 0.20, md());
-    const OptionValuation bsm(ud, spec(type), PricingMethod::Bsm);
+    const OptionValuation bsm(ud, spec(type), PricingMethod::Analytical);
     const OptionValuation mc(gbm(200'000), spec(type), PricingMethod::MonteCarlo);
 
     CHECK_THAT(mc.delta(kPathwise), WithinRel(bsm.delta(), 2e-2));
@@ -357,7 +358,8 @@ TEST_CASE("MC control variate equals the explicit adjustment identity", "[mc][cv
     const double european_mc =
         OptionValuation(process, euro, PricingMethod::MonteCarlo, base).present_value();
     const UnderlyingData ud(100.0, 0.25, md());
-    const double european_bsm = OptionValuation(ud, euro, PricingMethod::Bsm).present_value();
+    const double european_bsm =
+        OptionValuation(ud, euro, PricingMethod::Analytical).present_value();
     const double american_cv =
         OptionValuation(process, amer, PricingMethod::MonteCarlo, cv).present_value();
     CHECK_THAT(american_cv, WithinAbs(american_raw + (european_bsm - european_mc), 1e-8));
@@ -372,9 +374,10 @@ TEST_CASE("pricing method and underlying type must pair up", "[mc][valuation]") 
     CHECK_THROWS_MATCHES(OptionValuation(ud, spec(OptionType::Call), PricingMethod::MonteCarlo),
                          ConfigurationError,
                          message_contains("requires underlying to be a path process"));
-    CHECK_THROWS_MATCHES(OptionValuation(gbm(100), spec(OptionType::Call), PricingMethod::Bsm),
-                         ConfigurationError,
-                         message_contains("BSM pricing requires an UnderlyingData instance"));
+    CHECK_THROWS_MATCHES(
+        OptionValuation(gbm(100), spec(OptionType::Call), PricingMethod::Analytical),
+        ConfigurationError,
+        message_contains("ANALYTICAL pricing requires an UnderlyingData instance"));
     CHECK_THROWS_MATCHES(OptionValuation(gbm(100), spec(OptionType::Call), PricingMethod::Binomial),
                          ConfigurationError,
                          message_contains("BINOMIAL pricing requires an UnderlyingData instance"));
@@ -476,8 +479,9 @@ TEST_CASE("MC prices a custom payoff like its replication", "[mc][payoff]") {
     // European bull spread = C(95) - C(115) in BSM.
     const UnderlyingData ud(100.0, 0.20, md());
     const auto call = [&](double strike) {
-        return OptionValuation(
-                   ud, spec(OptionType::Call, ExerciseType::European, strike), PricingMethod::Bsm)
+        return OptionValuation(ud,
+                               spec(OptionType::Call, ExerciseType::European, strike),
+                               PricingMethod::Analytical)
             .present_value();
     };
     const double replication = call(95.0) - call(115.0);
@@ -596,7 +600,7 @@ TEST_CASE("pathwise, likelihood-ratio and numerical Greeks agree", "[mc][greeks]
         const VanillaSpec vanilla = spec(s.type, ExerciseType::European, s.strike);
         const OptionValuation mc(process, vanilla, PricingMethod::MonteCarlo);
         const OptionValuation bsm(
-            UnderlyingData(100.0, s.vol, market, {}, q_curve), vanilla, PricingMethod::Bsm);
+            UnderlyingData(100.0, s.vol, market, {}, q_curve), vanilla, PricingMethod::Analytical);
 
         using Greek = double (OptionValuation::*)(GreekOptions) const;
         const std::array<std::pair<const char*, Greek>, 5> greeks{

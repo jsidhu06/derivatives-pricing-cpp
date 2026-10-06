@@ -8,7 +8,7 @@ TEST_CASE("enum to_string matches the Python reference values", "[enums]") {
     CHECK(to_string(OptionType::Put) == "put");
     CHECK(to_string(ExerciseType::European) == "european");
     CHECK(to_string(ExerciseType::American) == "american");
-    CHECK(to_string(PricingMethod::Bsm) == "bsm");
+    CHECK(to_string(PricingMethod::Analytical) == "analytical");
     CHECK(to_string(PricingMethod::PdeFd) == "pde_fd");
     CHECK(to_string(PricingMethod::MonteCarlo) == "monte_carlo");
     CHECK(to_string(GreekCalculationMethod::LikelihoodRatio) == "likelihood_ratio");

@@ -90,15 +90,15 @@ TEST_CASE("knock-in plus knock-out equals the vanilla", "[barrier]") {
     const double knock_in =
         OptionValuation(underlying,
                         barrier_spec(base_params(barrier, direction, BarrierAction::In, type)),
-                        PricingMethod::Bsm)
+                        PricingMethod::Analytical)
             .present_value();
     const double knock_out =
         OptionValuation(underlying,
                         barrier_spec(base_params(barrier, direction, BarrierAction::Out, type)),
-                        PricingMethod::Bsm)
+                        PricingMethod::Analytical)
             .present_value();
     const double vanilla =
-        OptionValuation(underlying, vanilla_spec(type), PricingMethod::Bsm).present_value();
+        OptionValuation(underlying, vanilla_spec(type), PricingMethod::Analytical).present_value();
 
     CHECK_THAT(knock_in + knock_out, close_to(vanilla, 1e-10, 1e-12));
 }
@@ -108,7 +108,7 @@ TEST_CASE("up-and-out call with barrier at or below strike is worthless", "[barr
         ud(),
         barrier_spec(base_params(
             110.0, BarrierDirection::Up, BarrierAction::Out, OptionType::Call, /*strike=*/115.0)),
-        PricingMethod::Bsm);
+        PricingMethod::Analytical);
     CHECK(ov.present_value() == 0.0);
 }
 
@@ -122,10 +122,10 @@ TEST_CASE("discrete monitoring raises a knock-out's value", "[barrier]") {
     const double continuous_pv =
         OptionValuation(ud(),
                         barrier_spec(base_params(120.0, BarrierDirection::Up, BarrierAction::Out)),
-                        PricingMethod::Bsm)
+                        PricingMethod::Analytical)
             .present_value();
     const double discrete_pv =
-        OptionValuation(ud(), barrier_spec(discrete), PricingMethod::Bsm).present_value();
+        OptionValuation(ud(), barrier_spec(discrete), PricingMethod::Analytical).present_value();
     CHECK(discrete_pv > continuous_pv);
 }
 
@@ -141,28 +141,28 @@ TEST_CASE("sigma -> 0 collapses to the deterministic forward", "[barrier]") {
     const double dead_ko =
         OptionValuation(underlying,
                         barrier_spec(base_params(104.0, BarrierDirection::Up, BarrierAction::Out)),
-                        PricingMethod::Bsm)
+                        PricingMethod::Analytical)
             .present_value();
     CHECK(dead_ko == 0.0);
 
     const double live_ko =
         OptionValuation(underlying,
                         barrier_spec(base_params(110.0, BarrierDirection::Up, BarrierAction::Out)),
-                        PricingMethod::Bsm)
+                        PricingMethod::Analytical)
             .present_value();
     CHECK_THAT(live_ko, close_to(df * (forward - 100.0), 1e-12, 1e-14));
 
     const double hit_ki =
         OptionValuation(underlying,
                         barrier_spec(base_params(104.0, BarrierDirection::Up, BarrierAction::In)),
-                        PricingMethod::Bsm)
+                        PricingMethod::Analytical)
             .present_value();
     CHECK_THAT(hit_ki, close_to(df * (forward - 100.0), 1e-12, 1e-14));
 
     const double missed_ki =
         OptionValuation(underlying,
                         barrier_spec(base_params(110.0, BarrierDirection::Up, BarrierAction::In)),
-                        PricingMethod::Bsm)
+                        PricingMethod::Analytical)
             .present_value();
     CHECK(missed_ki == 0.0);
 }
@@ -176,23 +176,27 @@ TEST_CASE("barrier triggered at inception", "[barrier]") {
     auto ko = base_params(99.0, BarrierDirection::Up, BarrierAction::Out);
 
     SECTION("knock-out dies to its rebate") {
-        CHECK(OptionValuation(ud(), barrier_spec(ko), PricingMethod::Bsm).present_value() == 0.0);
+        CHECK(OptionValuation(ud(), barrier_spec(ko), PricingMethod::Analytical).present_value() ==
+              0.0);
 
         ko.rebate = 3.0;
         ko.rebate_timing = RebateTiming::AtHit;
-        CHECK(OptionValuation(ud(), barrier_spec(ko), PricingMethod::Bsm).present_value() == 3.0);
+        CHECK(OptionValuation(ud(), barrier_spec(ko), PricingMethod::Analytical).present_value() ==
+              3.0);
 
         ko.rebate_timing = RebateTiming::AtExpiry;
         const double maturity = year_fraction(kPricingDate, kMaturity, DayCountConvention::Act365F);
         const double df = DiscountCurve::flat(0.05).df(maturity);
-        CHECK_THAT(OptionValuation(ud(), barrier_spec(ko), PricingMethod::Bsm).present_value(),
-                   close_to(3.0 * df, 1e-12, 1e-14));
+        CHECK_THAT(
+            OptionValuation(ud(), barrier_spec(ko), PricingMethod::Analytical).present_value(),
+            close_to(3.0 * df, 1e-12, 1e-14));
     }
 
     SECTION("knock-in collapses to the vanilla, greeks included") {
         const auto ki = barrier_spec(base_params(101.0, BarrierDirection::Down, BarrierAction::In));
-        const OptionValuation triggered(ud(), ki, PricingMethod::Bsm);
-        const OptionValuation vanilla(ud(), vanilla_spec(OptionType::Call), PricingMethod::Bsm);
+        const OptionValuation triggered(ud(), ki, PricingMethod::Analytical);
+        const OptionValuation vanilla(
+            ud(), vanilla_spec(OptionType::Call), PricingMethod::Analytical);
 
         CHECK_THAT(triggered.present_value(), close_to(vanilla.present_value(), 1e-12, 1e-14));
         CHECK_THAT(triggered.delta(), close_to(vanilla.delta(kNumerical), 1e-12, 1e-14));
@@ -205,7 +209,7 @@ TEST_CASE("barrier triggered at inception", "[barrier]") {
     SECTION("knocked-out rebate sensitivities") {
         ko.rebate = 3.0;
         ko.rebate_timing = RebateTiming::AtExpiry;
-        const OptionValuation triggered(ud(), barrier_spec(ko), PricingMethod::Bsm);
+        const OptionValuation triggered(ud(), barrier_spec(ko), PricingMethod::Analytical);
         CHECK(triggered.delta() == 0.0);
         CHECK(triggered.gamma() == 0.0);
         CHECK(triggered.vega() == 0.0);
@@ -225,7 +229,7 @@ TEST_CASE("auto theta uses the PDE identity and tracks numerical theta", "[barri
     const OptionValuation ov(
         ud(),
         barrier_spec(base_params(120.0, BarrierDirection::Up, BarrierAction::Out)),
-        PricingMethod::Bsm);
+        PricingMethod::Analytical);
     // Note: up-and-out call theta is legitimately positive near the barrier
     // (the knock-out risk decays as time passes), so only agreement between
     // the identity and the bump is asserted, not a sign.
@@ -245,7 +249,7 @@ TEST_CASE("analytical barrier rejections", "[barrier]") {
         CHECK_THROWS_MATCHES(OptionValuation(with_divs,
                                              barrier_spec(base_params(
                                                  120.0, BarrierDirection::Up, BarrierAction::Out)),
-                                             PricingMethod::Bsm),
+                                             PricingMethod::Analytical),
                              UnsupportedFeatureError,
                              message_contains("does not support discrete dividends"));
     }
@@ -254,7 +258,7 @@ TEST_CASE("analytical barrier rejections", "[barrier]") {
         auto params = base_params(120.0, BarrierDirection::Up, BarrierAction::Out);
         params.monitoring = BarrierMonitoring::Discrete;
         params.monitoring_dates = std::vector<DateTime>{kMaturity};
-        const OptionValuation ov(ud(), barrier_spec(params), PricingMethod::Bsm);
+        const OptionValuation ov(ud(), barrier_spec(params), PricingMethod::Analytical);
         CHECK_THROWS_MATCHES(ov.present_value(),
                              UnsupportedFeatureError,
                              message_contains("requires num_observations"));
@@ -264,7 +268,7 @@ TEST_CASE("analytical barrier rejections", "[barrier]") {
         const OptionValuation ov(
             ud(),
             barrier_spec(base_params(120.0, BarrierDirection::Up, BarrierAction::Out)),
-            PricingMethod::Bsm);
+            PricingMethod::Analytical);
         CHECK_THROWS_MATCHES(ov.delta({.method = GreekCalculationMethod::Analytical}),
                              UnsupportedFeatureError,
                              message_contains("do not support GreekCalculationMethod.ANALYTICAL"));
@@ -274,7 +278,7 @@ TEST_CASE("analytical barrier rejections", "[barrier]") {
         auto params = base_params(120.0, BarrierDirection::Up, BarrierAction::Out);
         params.monitoring = BarrierMonitoring::Discrete;
         params.num_observations = 12;
-        const OptionValuation ov(ud(), barrier_spec(params), PricingMethod::Bsm);
+        const OptionValuation ov(ud(), barrier_spec(params), PricingMethod::Analytical);
         CHECK_THROWS_MATCHES(ov.theta(kNumerical),
                              UnsupportedFeatureError,
                              message_contains("Numerical theta is not supported"));
@@ -287,7 +291,7 @@ TEST_CASE("analytical barrier rejections", "[barrier]") {
         auto params = base_params(105.0, BarrierDirection::Down, BarrierAction::Out);
         params.monitoring = BarrierMonitoring::Discrete;
         params.num_observations = 4;
-        const OptionValuation ov(ud(), barrier_spec(params), PricingMethod::Bsm);
+        const OptionValuation ov(ud(), barrier_spec(params), PricingMethod::Analytical);
         CHECK_THROWS_MATCHES(ov.present_value(),
                              UnsupportedFeatureError,
                              message_contains("requires the spot on the live side"));
@@ -299,9 +303,9 @@ TEST_CASE("analytical barrier rejections", "[barrier]") {
     SECTION("American exercise") {
         auto params = base_params(120.0, BarrierDirection::Up, BarrierAction::Out);
         params.exercise_type = ExerciseType::American;
-        CHECK_THROWS_MATCHES(OptionValuation(ud(), barrier_spec(params), PricingMethod::Bsm),
+        CHECK_THROWS_MATCHES(OptionValuation(ud(), barrier_spec(params), PricingMethod::Analytical),
                              UnsupportedFeatureError,
-                             message_contains("BSM is only applicable to European"));
+                             message_contains("ANALYTICAL is only applicable to European"));
     }
 }
 
@@ -358,7 +362,7 @@ OptionValuation replay(const BarrierGoldenRow& row) {
          .currency = "USD",
          .num_observations =
              row.num_observations > 0 ? std::optional<int>(row.num_observations) : std::nullopt});
-    return {underlying, spec, PricingMethod::Bsm};
+    return {underlying, spec, PricingMethod::Analytical};
 }
 
 }  // namespace

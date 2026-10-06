@@ -46,7 +46,7 @@ VanillaSpec vanilla(OptionType type,
 }
 
 OptionValuation bsm(OptionType type, double vol) {
-    return {UnderlyingData(100.0, vol, md()), vanilla(type), PricingMethod::Bsm};
+    return {UnderlyingData(100.0, vol, md()), vanilla(type), PricingMethod::Analytical};
 }
 
 }  // namespace
@@ -111,7 +111,7 @@ OptionValuation replay(const ImpliedVolGoldenRow& row, double vol) {
                 PricingMethod::PdeFd,
                 PdeParams{.spot_steps = kPdeSpotSteps, .time_steps = kPdeTimeSteps}};
     }
-    return {u, s, PricingMethod::Bsm};
+    return {u, s, PricingMethod::Analytical};
 }
 
 ImpliedVolMethod solver_of(const char* code) {
@@ -258,7 +258,7 @@ TEST_CASE("implied vol rejects unsupported contracts and engines", "[implied_vol
         const OptionValuation ov(gbm, vanilla(OptionType::Call), PricingMethod::MonteCarlo);
         CHECK_THROWS_MATCHES(implied_volatility(10.0, ov),
                              UnsupportedFeatureError,
-                             message_contains("BSM, BINOMIAL, or PDE_FD"));
+                             message_contains("ANALYTICAL, BINOMIAL, or PDE_FD"));
     }
     SECTION("barrier spec") {
         const OptionValuation ov(UnderlyingData(100.0, 0.2, md()),
@@ -270,7 +270,7 @@ TEST_CASE("implied vol rejects unsupported contracts and engines", "[implied_vol
                                               .direction = BarrierDirection::Up,
                                               .action = BarrierAction::Out,
                                               .currency = "USD"}),
-                                 PricingMethod::Bsm);
+                                 PricingMethod::Analytical);
         CHECK_THROWS_MATCHES(implied_volatility(5.0, ov),
                              UnsupportedFeatureError,
                              message_contains("barrier specs"));

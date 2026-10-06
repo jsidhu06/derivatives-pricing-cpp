@@ -54,7 +54,7 @@ def row(label, *, spot, strike, barrier, direction, action, option_type, rate=0.
         rebate=rebate, rebate_timing=AT_HIT if rebate_at_hit else AT_EXPIRY,
         num_observations=num_observations or None,
     )
-    ov = dp.OptionValuation(underlying=ud, spec=spec, pricing_method=dp.PricingMethod.BSM)
+    ov = dp.OptionValuation(underlying=ud, spec=spec, pricing_method=dp.PricingMethod.ANALYTICAL)
     values = (
         ov.present_value(),
         ov.theta(),

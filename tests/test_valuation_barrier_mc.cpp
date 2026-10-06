@@ -59,7 +59,8 @@ BarrierSpec::Params base_params(double barrier,
 
 double analytic_pv(BarrierSpec::Params params) {
     const UnderlyingData ud(100.0, 0.25, md());
-    return OptionValuation(ud, BarrierSpec(std::move(params)), PricingMethod::Bsm).present_value();
+    return OptionValuation(ud, BarrierSpec(std::move(params)), PricingMethod::Analytical)
+        .present_value();
 }
 
 }  // namespace
@@ -468,7 +469,7 @@ TEST_CASE("European MC barrier Greeks agree with the closed form", "[barrier][mc
         const auto params = base_params(c.barrier, c.direction, c.action, c.type);
         const OptionValuation mc(gbm(100'000, 100), BarrierSpec(params), PricingMethod::MonteCarlo);
         const OptionValuation bsm(
-            UnderlyingData(100.0, 0.25, md()), BarrierSpec(params), PricingMethod::Bsm);
+            UnderlyingData(100.0, 0.25, md()), BarrierSpec(params), PricingMethod::Analytical);
         for (const auto& g : greeks) {
             INFO(to_string(c.direction)
                  << "-" << to_string(c.action) << " " << to_string(c.type) << " " << g.name);

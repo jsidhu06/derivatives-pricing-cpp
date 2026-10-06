@@ -93,7 +93,7 @@ std::optional<ValuationParams> resolve_params(PricingMethod method,
                     return PdeParams::for_barriers(barrier->monitoring());
                 }
                 return PdeParams{};
-            case PricingMethod::Bsm:
+            case PricingMethod::Analytical:
                 return std::nullopt;
         }
         return std::nullopt;
@@ -119,7 +119,7 @@ std::optional<ValuationParams> resolve_params(PricingMethod method,
         case PricingMethod::PdeFd:
             require(PdeParams{}, "PdeParams");
             return params;
-        case PricingMethod::Bsm:
+        case PricingMethod::Analytical:
             break;
     }
     throw ConfigurationError(
@@ -134,10 +134,10 @@ std::unique_ptr<engines::PricingEngine> build_engine(const detail::ValuationStat
 
     if (std::holds_alternative<BarrierSpec>(state.spec)) {
         switch (method) {
-            case PricingMethod::Bsm:
+            case PricingMethod::Analytical:
                 if (exercise != ExerciseType::European) {
                     throw UnsupportedFeatureError(
-                        "BSM is only applicable to European option valuation. Select a "
+                        "ANALYTICAL is only applicable to European option valuation. Select a "
                         "different pricing method for American options such as Binomial, "
                         "PDE_FD or MONTE_CARLO.");
                 }
@@ -153,12 +153,12 @@ std::unique_ptr<engines::PricingEngine> build_engine(const detail::ValuationStat
     }
 
     switch (method) {
-        case PricingMethod::Bsm:
+        case PricingMethod::Analytical:
             if (exercise != ExerciseType::European) {
                 throw UnsupportedFeatureError(
-                    "BSM is only applicable to European option valuation. Select a different "
-                    "pricing method for American options such as Binomial, PDE_FD or "
-                    "MONTE_CARLO.");
+                    "ANALYTICAL is only applicable to European option valuation. Select a "
+                    "different pricing method for American options such as Binomial, PDE_FD "
+                    "or MONTE_CARLO.");
             }
             return std::make_unique<engines::BsmEngine>(state);
         case PricingMethod::Binomial:
@@ -207,7 +207,7 @@ GreekCalculationMethod auto_select_greek_method(const detail::ValuationState& st
                                                 bool tree_capable,
                                                 bool grid_capable) {
     const bool is_barrier = std::holds_alternative<BarrierSpec>(state.spec);
-    if (state.pricing_method == PricingMethod::Bsm && !is_barrier) {
+    if (state.pricing_method == PricingMethod::Analytical && !is_barrier) {
         return GreekCalculationMethod::Analytical;
     }
     if (tree_capable && state.pricing_method == PricingMethod::Binomial) {
@@ -282,7 +282,7 @@ GreekCalculationMethod resolve_greek_method(const detail::ValuationState& state,
     std::optional<Rule> rule;
     switch (method) {
         case GreekCalculationMethod::Analytical:
-            rule = Rule{PricingMethod::Bsm, true, "all BSM greeks"};
+            rule = Rule{PricingMethod::Analytical, true, "all greeks"};
             break;
         case GreekCalculationMethod::Tree:
             rule = Rule{PricingMethod::Binomial, tree_capable, "delta, gamma, and theta"};
@@ -581,7 +581,8 @@ struct OptionValuation::Impl {
                 })
                 .present_value();
         const double euro_bsm =
-            OptionValuation(state.underlying.as_underlying_data(), euro_spec, PricingMethod::Bsm)
+            OptionValuation(
+                state.underlying.as_underlying_data(), euro_spec, PricingMethod::Analytical)
                 .present_value();
 
         return base_pv + (euro_bsm - euro_numerical);
@@ -635,9 +636,9 @@ void OptionValuation::init(detail::Underlying underlying,
     std::string currency = spec_currency.value_or(underlying.currency());
 
     const auto option_type = option_type_of(spec);
-    if (pricing_method == PricingMethod::Bsm && !option_type.has_value()) {
+    if (pricing_method == PricingMethod::Analytical && !option_type.has_value()) {
         throw UnsupportedFeatureError(
-            "BSM pricing requires a CALL or PUT option type (not available for custom "
+            "ANALYTICAL pricing requires a CALL or PUT option type (not available for custom "
             "PayoffSpec).");
     }
 
@@ -824,7 +825,7 @@ double OptionValuation::theta(GreekOptions options) const {
         // forward time bump (better accuracy). Auto-select only; an explicit
         // NUMERICAL request or a user bump opts back into bump-and-revalue,
         // and inception-triggered barriers short-circuit below.
-        if (impl_->is_barrier() && state.pricing_method == PricingMethod::Bsm &&
+        if (impl_->is_barrier() && state.pricing_method == PricingMethod::Analytical &&
             !options.method.has_value() && !options.bump.has_value() &&
             !detail::barrier_triggered_at_inception(state)) {
             return barrier_bsm_identity_theta(*this, state);

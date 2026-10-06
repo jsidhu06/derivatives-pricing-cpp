@@ -13,7 +13,7 @@ namespace dp::engines {
 /// at hit or at expiry, knock-in paid at expiry if never hit. Non-flat rate
 /// and dividend curves enter through flat-equivalent rates at maturity.
 ///
-/// Dispatched by `OptionValuation` for `PricingMethod::Bsm` + `BarrierSpec`.
+/// Dispatched by `OptionValuation` for `PricingMethod::Analytical` + `BarrierSpec`.
 class AnalyticalBarrierEngine final : public PricingEngine {
 public:
     /// Throws `UnsupportedFeatureError` for discrete dividends.

@@ -140,7 +140,7 @@ TEST_CASE("PDE scheme, grid and solver variants agree for American options", "[p
 TEST_CASE("PDE European agrees with BSM", "[pde]") {
     const auto type = GENERATE(OptionType::Call, OptionType::Put);
     const auto u = ud();
-    const OptionValuation bsm(u, spec(type), PricingMethod::Bsm);
+    const OptionValuation bsm(u, spec(type), PricingMethod::Analytical);
     const OptionValuation pde(
         u, spec(type), PricingMethod::PdeFd, PdeParams{.spot_steps = 400, .time_steps = 400});
     CHECK_THAT(pde.present_value(), WithinRel(bsm.present_value(), 1e-3));
@@ -165,7 +165,7 @@ TEST_CASE("grid theta is negative and close to BSM", "[pde][greeks]") {
     const auto u = ud();
     const OptionValuation pde(
         u, spec(type), PricingMethod::PdeFd, PdeParams{.spot_steps = 400, .time_steps = 400});
-    const OptionValuation bsm(u, spec(type), PricingMethod::Bsm);
+    const OptionValuation bsm(u, spec(type), PricingMethod::Analytical);
     const double theta = pde.theta(kGrid);
     CHECK(theta < 0.0);
     CHECK_THAT(theta, WithinRel(bsm.theta(), 2e-2));
@@ -290,7 +290,7 @@ TEST_CASE("PDE control variate equals the explicit adjustment identity", "[pde][
 
     const double american_raw = pde_pv(u, amer, base);
     const double european_num = pde_pv(u, euro, base);
-    const double european_bsm = OptionValuation(u, euro, PricingMethod::Bsm).present_value();
+    const double european_bsm = OptionValuation(u, euro, PricingMethod::Analytical).present_value();
     CHECK_THAT(pde_pv(u, amer, cv), WithinAbs(american_raw + (european_bsm - european_num), 1e-6));
 }
 

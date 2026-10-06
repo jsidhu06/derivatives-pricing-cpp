@@ -44,14 +44,14 @@ struct Dispatch {
 };
 
 /// Every path that can produce delta / gamma / theta.
-constexpr std::array<Dispatch, 5> kAllPaths{{{PricingMethod::Bsm, G::Numerical, "bsm_num"},
+constexpr std::array<Dispatch, 5> kAllPaths{{{PricingMethod::Analytical, G::Numerical, "bsm_num"},
                                              {PricingMethod::Binomial, G::Numerical, "bin_num"},
                                              {PricingMethod::Binomial, G::Tree, "bin_tree"},
                                              {PricingMethod::PdeFd, G::Numerical, "pde_num"},
                                              {PricingMethod::PdeFd, G::Grid, "pde_grid"}}};
 /// Vega and rho are bump-and-revalue only on barriers.
 constexpr std::array<Dispatch, 3> kNumericalPaths{
-    {{PricingMethod::Bsm, G::Numerical, "bsm_num"},
+    {{PricingMethod::Analytical, G::Numerical, "bsm_num"},
      {PricingMethod::Binomial, G::Numerical, "bin_num"},
      {PricingMethod::PdeFd, G::Numerical, "pde_num"}}};
 

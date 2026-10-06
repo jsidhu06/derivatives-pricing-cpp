@@ -80,7 +80,8 @@ double merton_price(OptionType type,
         const double sigma_n = std::sqrt(sigma * sigma + n * delta * delta / maturity);
         const double rate_n = rate - lambd * kbar + n * std::log1p(kbar) / maturity;
         const UnderlyingData leg(spot, sigma_n, md(rate_n));
-        price += weight * OptionValuation(leg, spec(type), PricingMethod::Bsm).present_value();
+        price +=
+            weight * OptionValuation(leg, spec(type), PricingMethod::Analytical).present_value();
     }
     return price;
 }
@@ -423,8 +424,8 @@ TEST_CASE("correlated GBM prices European options like independent GBM",
 
     const double mc = OptionValuation(correlated, spec(OptionType::Call), PricingMethod::MonteCarlo)
                           .present_value();
-    const double bsm =
-        OptionValuation(analytic, spec(OptionType::Call), PricingMethod::Bsm).present_value();
+    const double bsm = OptionValuation(analytic, spec(OptionType::Call), PricingMethod::Analytical)
+                           .present_value();
     CHECK_THAT(mc, WithinRel(bsm, 2e-2));
 }
 
@@ -440,7 +441,7 @@ TEST_CASE("non-GBM processes are rejected where GBM is required", "[processes][v
     CHECK_THROWS_MATCHES(OptionValuation(jd, spec(OptionType::Call), PricingMethod::Binomial),
                          ConfigurationError,
                          message_contains("got JdProcess"));
-    CHECK_THROWS_MATCHES(OptionValuation(srd, spec(OptionType::Call), PricingMethod::Bsm),
+    CHECK_THROWS_MATCHES(OptionValuation(srd, spec(OptionType::Call), PricingMethod::Analytical),
                          ConfigurationError,
                          message_contains("got SrdProcess"));
 

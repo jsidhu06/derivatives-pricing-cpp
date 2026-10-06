@@ -16,7 +16,7 @@ struct ImpliedVolParams {
     /// convergence.
     ImpliedVolMethod method = ImpliedVolMethod::NewtonRaphson;
     /// Starting point for Newton-Raphson. When unset: the valuation's own
-    /// volatility for BSM, an extrinsic-value heuristic otherwise.
+    /// volatility for `Analytical`, an extrinsic-value heuristic otherwise.
     std::optional<double> initial_vol = std::nullopt;
     /// Search interval for the volatility (annualised). Expanded outwards
     /// (halving `vol_lower`, doubling `vol_upper`, up to 6 times each) when
@@ -44,11 +44,11 @@ struct ImpliedVolResult {
 /// Volatility at which `valuation` reprices to `target_price` (per unit of
 /// underlying, contract size not applied).
 ///
-/// Supported: `VanillaSpec` on `UnderlyingData`, priced by BSM (European) or
+/// Supported: `VanillaSpec` on `UnderlyingData`, priced by `Analytical` (European) or
 /// by the binomial / PDE engines (European or American). Every evaluation
 /// revalues a copy of `valuation` with the volatility replaced, so the
 /// engine parameters carry over. Newton-Raphson uses the analytical vega for
-/// BSM and the numerical vega otherwise, and falls back to bisection if it
+/// `Analytical` and the numerical vega otherwise, and falls back to bisection if it
 /// fails to converge.
 ///
 /// Throws `UnsupportedFeatureError` for barrier / custom-payoff specs and

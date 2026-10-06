@@ -168,7 +168,7 @@ TEST_CASE("tree Greeks are the default for binomial and look sane", "[binomial][
     CHECK(call.gamma() > 0.0);
     CHECK(call.theta() < 0.0);
     // Tree delta close to BSM analytical delta.
-    const OptionValuation bsm(ud(), spec(), PricingMethod::Bsm);
+    const OptionValuation bsm(ud(), spec(), PricingMethod::Analytical);
     CHECK_THAT(call.delta(), WithinRel(bsm.delta(), 1e-2));
     CHECK_THAT(call.gamma(), WithinRel(bsm.gamma(), 1e-2));
 }
@@ -253,7 +253,7 @@ TEST_CASE("control variate equals the explicit adjustment identity", "[binomial]
 
     const double american_raw = tree_pv(u, amer, base);
     const double european_num = tree_pv(u, euro, base);
-    const double european_bsm = OptionValuation(u, euro, PricingMethod::Bsm).present_value();
+    const double european_bsm = OptionValuation(u, euro, PricingMethod::Analytical).present_value();
     const double american_cv = tree_pv(u, amer, cv);
 
     CHECK_THAT(american_cv, WithinAbs(american_raw + (european_bsm - european_num), 1e-8));

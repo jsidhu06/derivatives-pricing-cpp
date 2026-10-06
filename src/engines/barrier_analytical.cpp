@@ -393,7 +393,7 @@ double AnalyticalBarrierEngine::triggered_at_inception_value(double df_r) const 
     const VanillaSpec vanilla = detail::vanilla_equivalent_spec(spec);
     const detail::ValuationState vanilla_state{.underlying = state_.underlying,
                                                .spec = OptionSpec{vanilla},
-                                               .pricing_method = PricingMethod::Bsm,
+                                               .pricing_method = PricingMethod::Analytical,
                                                .params = std::nullopt,
                                                .currency = state_.currency,
                                                .option_type = spec.option_type()};
