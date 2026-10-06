@@ -1,6 +1,5 @@
 #include "dp/params.hpp"
 
-#include "dp/diagnostics.hpp"
 #include "dp/exceptions.hpp"
 
 #include <format>
@@ -26,38 +25,6 @@ void MonteCarloParams::validate() const {
 void BinomialParams::validate() const {
     if (num_steps < 1) {
         throw ValidationError(std::format("num_steps must be >= 1, got {}", num_steps));
-    }
-    if (mc_paths.has_value() && asian_tree_averages.has_value()) {
-        throw ValidationError("Only one of mc_paths and asian_tree_averages can be set, got both");
-    }
-    if (mc_paths.has_value() && *mc_paths < 1) {
-        throw ValidationError(std::format("mc_paths must be >= 1, got {}", *mc_paths));
-    }
-    if (asian_tree_averages.has_value()) {
-        if (*asian_tree_averages < 1) {
-            throw ValidationError(
-                std::format("asian_tree_averages must be >= 1, got {}", *asian_tree_averages));
-        }
-        const double ratio = static_cast<double>(*asian_tree_averages) / num_steps;
-        if (ratio < 1.5) {
-            warn(
-                "asian_tree_averages / num_steps < 1.5; Hull-style Asian valuation may "
-                "exhibit upward interpolation bias. A ratio of 1.5–2.0 is recommended.");
-        }
-        if (ratio > 2.1) {
-            warn(
-                "asian_tree_averages is large relative to num_steps; memory usage may be "
-                "high with limited accuracy gains.");
-        }
-        const double est_bytes = static_cast<double>(*asian_tree_averages) *
-                                 static_cast<double>(num_steps + 1) *
-                                 static_cast<double>(num_steps + 1) * 8.0;
-        if (est_bytes > 1e9) {
-            warn(std::format(
-                "Estimated memory for Hull Asian grid is ~{:.2f} GiB; consider reducing "
-                "num_steps or asian_tree_averages.",
-                est_bytes / (1024.0 * 1024.0 * 1024.0)));
-        }
     }
 }
 

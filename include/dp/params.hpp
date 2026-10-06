@@ -23,7 +23,6 @@ struct MonteCarloParams {
     double ridge_lambda = 1e-8;
     /// Minimum in-the-money paths required to run the regression.
     int min_itm = 25;
-    bool log_timings = false;
     /// Warn when the MC standard error exceeds this fraction of |PV|.
     std::optional<double> std_error_warn_ratio = 0.1;
     /// Control-variate adjustment for American options using the European
@@ -38,15 +37,8 @@ struct MonteCarloParams {
 /// Parameters for binomial-tree valuation.
 struct BinomialParams {
     int num_steps = 500;
-    /// Paths when sampling the tree (path-dependent payoffs). Exclusive with
-    /// `asian_tree_averages`.
-    std::optional<int> mc_paths = std::nullopt;
-    std::optional<unsigned long long> random_seed = std::nullopt;
-    /// Representative averages per node for Hull-style Asian valuation.
-    std::optional<int> asian_tree_averages = std::nullopt;
     /// Hull-style control variate for American vanilla pricing.
     bool control_variate_european = false;
-    bool log_timings = false;
 
     void validate() const;
 };
@@ -76,7 +68,6 @@ struct PdeParams {
     PdeSpaceGrid space_grid = PdeSpaceGrid::Spot;
     PdeEarlyExercise american_solver = PdeEarlyExercise::GaussSeidel;
     bool control_variate_european = false;
-    bool log_timings = false;
 
     void validate() const;
 

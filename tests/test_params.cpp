@@ -42,23 +42,6 @@ TEST_CASE("BinomialParams validation", "[params]") {
     CHECK_THROWS_MATCHES(BinomialParams{.num_steps = 0}.validate(),
                          ValidationError,
                          message_contains("num_steps must be >= 1"));
-    CHECK_THROWS_MATCHES((BinomialParams{.mc_paths = 10, .asian_tree_averages = 10}.validate()),
-                         ValidationError,
-                         message_contains("Only one of"));
-    CHECK_THROWS_MATCHES(BinomialParams{.mc_paths = 0}.validate(),
-                         ValidationError,
-                         message_contains("mc_paths must be >= 1"));
-    CHECK_THROWS_MATCHES(BinomialParams{.asian_tree_averages = 0}.validate(),
-                         ValidationError,
-                         message_contains("asian_tree_averages must be >= 1"));
-}
-
-TEST_CASE("BinomialParams warns on poor Asian average ratio", "[params]") {
-    const dp::test::WarningCapture capture;
-    BinomialParams{.num_steps = 100, .asian_tree_averages = 50}.validate();
-    CHECK(capture.any_contains("< 1.5"));
-    BinomialParams{.num_steps = 100, .asian_tree_averages = 400}.validate();
-    CHECK(capture.any_contains("large relative to num_steps"));
 }
 
 TEST_CASE("PdeParams validation", "[params]") {
