@@ -121,6 +121,17 @@ public:
         return visit(
             [&](const auto& u) { return Underlying(u.with_discount_curve(std::move(curve))); });
     }
+    /// The path process's correlation context; null when there is none (or
+    /// for `UnderlyingData`).
+    [[nodiscard]] const CorrelationContext* correlation_context() const {
+        return visit([](const auto& u) -> const CorrelationContext* {
+            if constexpr (requires { u.correlation_context(); }) {
+                return u.correlation_context().get();
+            } else {
+                return nullptr;
+            }
+        });
+    }
     /// Merge extra dates into a path process's simulation grid; no-op for
     /// `UnderlyingData` (deterministic engines have no grid).
     [[nodiscard]] Underlying with_observation_dates(std::vector<DateTime> dates) const {

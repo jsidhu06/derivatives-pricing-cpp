@@ -155,6 +155,12 @@ public:
     /// DOWN: `spot <= barrier`. Not monitoring-aware.
     [[nodiscard]] bool is_spot_past_barrier(double spot) const noexcept;
 
+    /// Discrete monitoring dates seen from `pricing_date`: the explicit
+    /// `monitoring_dates`, or `num_observations` dates at T/N, 2T/N, ..., T
+    /// (the academic convention). `nullopt` for continuous monitoring.
+    [[nodiscard]] std::optional<std::vector<DateTime>> monitoring_schedule(
+        DateTime pricing_date) const;
+
 private:
     Params p_;
 };
@@ -174,5 +180,12 @@ using OptionSpec = std::variant<VanillaSpec, PayoffSpec, BarrierSpec>;
 [[nodiscard]] std::optional<double> strike_of(const OptionSpec& spec);
 /// Call/put direction, or nullopt for specs without one (`PayoffSpec`).
 [[nodiscard]] std::optional<OptionType> option_type_of(const OptionSpec& spec);
+
+/// Dates a Monte Carlo grid must contain to value `spec` from
+/// `pricing_date`: the maturity plus any discrete barrier monitoring dates,
+/// sorted, unique and on or after `pricing_date`. `shared_time_grid`
+/// applies it to every spec in its `GridEvents`.
+[[nodiscard]] std::vector<DateTime> contract_event_dates(const OptionSpec& spec,
+                                                         DateTime pricing_date);
 
 }  // namespace dp

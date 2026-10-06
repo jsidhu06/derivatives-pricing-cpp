@@ -13,6 +13,7 @@
 #include "engines/pde_barrier.hpp"
 #include "valuation_state.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -687,9 +688,31 @@ void OptionValuation::init(detail::Underlying underlying,
         }
         // Monte Carlo needs every discrete monitoring date on the simulation
         // grid: inject the schedule into the process's observation dates
-        // (mirrors the Python facade's sim_config injection).
-        if (pricing_method == PricingMethod::MonteCarlo && dates.has_value()) {
+        // (mirrors the Python facade's sim_config injection). A correlated
+        // process's grid is fixed by its context instead (checked below).
+        if (pricing_method == PricingMethod::MonteCarlo && dates.has_value() &&
+            impl_->state.underlying.correlation_context() == nullptr) {
             impl_->state.underlying = impl_->state.underlying.with_observation_dates(*dates);
+        }
+    }
+    if (const auto* context = impl_->state.underlying.correlation_context()) {
+        // The context fixes the grid for every asset: the dates this contract
+        // needs must already be on it (injecting them would misalign this
+        // asset's draws with the others').
+        const auto& grid = context->time_grid();
+        std::string missing;
+        for (const DateTime d :
+             contract_event_dates(impl_->state.spec, impl_->state.pricing_date())) {
+            if (!std::binary_search(grid.begin(), grid.end(), d)) {
+                missing += (missing.empty() ? "" : ", ") + to_string(d);
+            }
+        }
+        if (!missing.empty()) {
+            throw ValidationError(std::format(
+                "Contract dates [{}] are missing from the CorrelationContext's shared time grid. "
+                "Build the grid with shared_time_grid(..., {{.specs = ...}}) listing every "
+                "contract priced on the context.",
+                missing));
         }
     }
 
@@ -868,6 +891,12 @@ double OptionValuation::theta(GreekOptions options) const {
         const DateTime bumped_date = add_days(state.pricing_date(), days);
         if (bumped_date >= state.maturity()) {
             return 0.0;
+        }
+        if (state.underlying.correlation_context() != nullptr) {
+            throw UnsupportedFeatureError(
+                "Numerical theta moves the pricing date, but a process in a CorrelationContext "
+                "simulates on the context's fixed grid. Use GreekCalculationMethod::Pathwise or "
+                "LikelihoodRatio instead.");
         }
         const double value_now = present_value();
         const auto bumped = impl_->rebuild(state.underlying.with_pricing_date(bumped_date));

@@ -160,14 +160,67 @@ void SimulationConfig::validate() const {
     }
 }
 
+std::vector<DateTime> shared_time_grid(DateTime pricing_date,
+                                       DateTime end_date,
+                                       int num_steps,
+                                       const GridEvents& events) {
+    if (num_steps <= 0) {
+        throw ValidationError(
+            std::format("num_steps must be a positive integer, got {}", num_steps));
+    }
+    const DateTime dense_start = events.grid_start.value_or(pricing_date);
+    std::set<DateTime> all;
+    for (const DateTime d :
+         date_range(dense_start, end_date, static_cast<std::size_t>(num_steps) + 1)) {
+        all.insert(d);
+    }
+    all.insert(pricing_date);
+    all.insert(dense_start);
+    all.insert(end_date);
+    // Event dates before the pricing date are dropped: the diffusion cannot
+    // start before the valuation date. (A grid_start before it still fails
+    // the check below.)
+    const auto add_event = [&](DateTime d) {
+        if (d >= pricing_date) {
+            all.insert(d);
+        }
+    };
+    for (const OptionSpec& spec : events.specs) {
+        for (const DateTime d : contract_event_dates(spec, pricing_date)) {
+            add_event(d);
+        }
+    }
+    for (const DividendSchedule& schedule : events.dividends) {
+        for (const auto& dividend : schedule) {
+            if (dividend.ex_date <= end_date) {
+                add_event(dividend.ex_date);
+            }
+        }
+    }
+    for (const DateTime d : events.extra_dates) {
+        add_event(d);
+    }
+    std::vector<DateTime> dates(all.begin(), all.end());
+    if (dates.front() != pricing_date) {
+        throw ValidationError(std::format(
+            "Time grid must start at pricing_date ({}), but starts at {}. Check grid_start / "
+            "extra dates.",
+            to_string(pricing_date),
+            to_string(dates.front())));
+    }
+    return dates;
+}
+
 // ── CorrelationContext ─────────────────────────────────────────────
 
 CorrelationContext::CorrelationContext(Eigen::MatrixXd correlation_matrix,
                                        std::vector<Eigen::MatrixXd> random_numbers,
-                                       std::vector<std::string> asset_names)
+                                       std::vector<std::string> asset_names,
+                                       std::vector<DateTime> time_grid)
     : correlation_matrix_(std::move(correlation_matrix)),
       random_numbers_(std::move(random_numbers)),
-      asset_names_(std::move(asset_names)) {
+      asset_names_(std::move(asset_names)),
+      time_grid_(std::move(time_grid)) {
     const Index n = correlation_matrix_.rows();
     if (n == 0 || correlation_matrix_.cols() != n) {
         throw ValidationError(std::format("correlation_matrix must be square, got shape ({}, {})",
@@ -213,6 +266,46 @@ CorrelationContext::CorrelationContext(Eigen::MatrixXd correlation_matrix,
                 "(paths x steps)");
         }
     }
+
+    if (time_grid_.size() < 2) {
+        throw ValidationError(
+            std::format("time_grid must contain at least two dates, got {}", time_grid_.size()));
+    }
+    for (std::size_t i = 1; i < time_grid_.size(); ++i) {
+        if (time_grid_[i] <= time_grid_[i - 1]) {
+            throw ValidationError(
+                std::format("time_grid must be strictly ascending, got {} after {}",
+                            to_string(time_grid_[i]),
+                            to_string(time_grid_[i - 1])));
+        }
+    }
+    if (std::cmp_not_equal(random_numbers_.front().cols(), time_grid_.size() - 1)) {
+        throw ValidationError(
+            std::format("random_numbers step count ({}) must equal the number of time_grid "
+                        "intervals ({})",
+                        random_numbers_.front().cols(),
+                        time_grid_.size() - 1));
+    }
+}
+
+CorrelationContext CorrelationContext::from_seed(Eigen::MatrixXd correlation_matrix,
+                                                 std::vector<std::string> asset_names,
+                                                 std::vector<DateTime> time_grid,
+                                                 Index paths,
+                                                 std::optional<std::uint64_t> seed) {
+    if (paths <= 0) {
+        throw ValidationError(std::format("paths must be a positive integer, got {}", paths));
+    }
+    const auto steps = static_cast<Index>(time_grid.size()) - 1;
+    if (steps < 1) {
+        throw ValidationError(
+            std::format("time_grid must contain at least two dates, got {}", time_grid.size()));
+    }
+    std::vector<Eigen::MatrixXd> draws = standard_normals(asset_names.size(), paths, steps, seed);
+    return {std::move(correlation_matrix),
+            std::move(draws),
+            std::move(asset_names),
+            std::move(time_grid)};
 }
 
 std::size_t CorrelationContext::asset_index(const std::string& name) const {
@@ -258,9 +351,6 @@ PathProcess::PathProcess(MarketData market_data,
       corr_(std::move(corr)),
       name_(std::move(name)) {
     config_.validate();
-    if (config_.time_grid.has_value()) {
-        validate_ascending_grid(*config_.time_grid, market_data_.pricing_date());
-    }
     if (corr_ != nullptr) {
         if (!name_.has_value()) {
             throw ValidationError(
@@ -269,10 +359,86 @@ PathProcess::PathProcess(MarketData market_data,
         }
         // Validate early: fail now rather than at simulation time.
         rn_index_ = corr_->asset_index(*name_);
+        validate_against_context();
+    }
+    if (config_.time_grid.has_value()) {
+        validate_ascending_grid(*config_.time_grid, market_data_.pricing_date());
+    }
+}
+
+void PathProcess::validate_against_context() const {
+    // Column k of the context's draws drives (t_k, t_k+1) for every asset, so
+    // a process on any other grid would silently pair its intervals with
+    // another asset's draws for a different interval.
+    const std::vector<DateTime>& grid = corr_->time_grid();
+    const std::string name = name_.value_or("");
+    if (!config_.time_grid.has_value()) {
+        throw ValidationError(std::format(
+            "Process '{}' is in a CorrelationContext, so it must simulate on the context's "
+            "shared grid: pass SimulationConfig{{.time_grid = context->time_grid()}}.",
+            name));
+    }
+    const std::vector<DateTime>& own = *config_.time_grid;
+    if (own != grid) {
+        const auto [own_it, grid_it] =
+            std::mismatch(own.begin(), own.end(), grid.begin(), grid.end());
+        const std::string first_difference =
+            own_it != own.end() && grid_it != grid.end()
+                ? std::format("{} vs {}", to_string(*own_it), to_string(*grid_it))
+                : std::format("{} dates vs {}", own.size(), grid.size());
+        throw ValidationError(std::format(
+            "Process '{}' time_grid differs from its CorrelationContext's shared grid (first "
+            "difference: {}); pass SimulationConfig{{.time_grid = context->time_grid()}}.",
+            name,
+            first_difference));
+    }
+    if (grid.front() != market_data_.pricing_date()) {
+        throw ValidationError(std::format(
+            "CorrelationContext time_grid starts at {}, but process '{}' is priced on {}; the "
+            "shared grid must start at the pricing date.",
+            to_string(grid.front()),
+            name,
+            to_string(market_data_.pricing_date())));
+    }
+    if (config_.paths != corr_->paths()) {
+        throw ValidationError(std::format(
+            "Process '{}' simulates {} paths but its CorrelationContext draws cover {}.",
+            name,
+            config_.paths,
+            corr_->paths()));
+    }
+    require_on_context_grid(config_.observation_dates);
+}
+
+void PathProcess::require_on_context_grid(const std::vector<DateTime>& dates) const {
+    const std::vector<DateTime>& grid = corr_->time_grid();
+    std::string missing;
+    for (const DateTime d : dates) {
+        if (d >= grid.front() && d <= grid.back() &&
+            !std::binary_search(grid.begin(), grid.end(), d)) {
+            missing += (missing.empty() ? "" : ", ") + to_string(d);
+        }
+    }
+    if (!missing.empty()) {
+        throw ValidationError(std::format(
+            "Process '{}' needs dates missing from its CorrelationContext's shared grid: [{}]. "
+            "Ex-dividend and observation dates must already be on the shared grid: pass the "
+            "dividend schedule to shared_time_grid(..., {{.dividends = ...}}).",
+            name_.value_or(""),
+            missing));
     }
 }
 
 void PathProcess::register_grid_dates(const DividendSchedule& dividends) {
+    if (corr_ != nullptr) {
+        std::vector<DateTime> ex_dates;
+        ex_dates.reserve(dividends.size());
+        for (const auto& dividend : dividends) {
+            ex_dates.push_back(dividend.ex_date);
+        }
+        require_on_context_grid(ex_dates);
+        return;
+    }
     for (const auto& dividend : dividends) {
         dividend_grid_dates_.push_back(dividend.ex_date);
     }
@@ -292,42 +458,15 @@ std::vector<DateTime> PathProcess::build_dates() const {
     if (config_.time_grid.has_value()) {
         return *config_.time_grid;
     }
-    const DateTime pricing = market_data_.pricing_date();
-    const DateTime dense_start = config_.grid_start.value_or(pricing);
-    const DateTime end = end_date();
-
     if (!config_.num_steps.has_value()) {
         throw ConfigurationError("SimulationConfig.num_steps is required to build a dense grid");
     }
-    std::set<DateTime> all;
-    for (const DateTime d :
-         date_range(dense_start, end, static_cast<std::size_t>(*config_.num_steps) + 1)) {
-        all.insert(d);
-    }
-    all.insert(pricing);
-    all.insert(dense_start);
-    all.insert(end);
-    // Observation dates before the pricing date are excluded: the diffusion
-    // cannot start before the valuation date.
-    for (const DateTime d : config_.observation_dates) {
-        if (d >= pricing) {
-            all.insert(d);
-        }
-    }
-    for (const DateTime d : dividend_grid_dates_) {
-        if (d >= pricing) {
-            all.insert(d);
-        }
-    }
-    std::vector<DateTime> dates(all.begin(), all.end());
-    if (dates.front() != pricing) {
-        throw ValidationError(std::format(
-            "Time grid must start at pricing_date ({}), but starts at {}. Check grid_start / "
-            "observation_dates.",
-            to_string(pricing),
-            to_string(dates.front())));
-    }
-    return dates;
+    std::vector<DateTime> extra = config_.observation_dates;
+    extra.insert(extra.end(), dividend_grid_dates_.begin(), dividend_grid_dates_.end());
+    return shared_time_grid(market_data_.pricing_date(),
+                            end_date(),
+                            *config_.num_steps,
+                            {.extra_dates = std::move(extra), .grid_start = config_.grid_start});
 }
 
 PathProcess::GridBundle PathProcess::prepare_grid() const {
@@ -357,22 +496,10 @@ Eigen::MatrixXd PathProcess::draw_normals(std::optional<std::uint64_t> seed, Ind
     if (corr_ != nullptr) {
         // Correlated multi-asset draws: this asset's linear combination of the
         // shared pre-generated numbers. antithetic / moment_matching do not
-        // apply — the context owns the raw draws.
+        // apply — the context owns the raw draws. The process grid is the
+        // context's grid and the path counts match (both validated at
+        // construction), so every column lines up across assets.
         const std::vector<Eigen::MatrixXd>& raw = corr_->random_numbers();
-        if (raw.front().rows() != paths) {
-            throw ConfigurationError(
-                std::format("CorrelationContext random_numbers have {} paths but the "
-                            "simulation is configured for {} paths",
-                            raw.front().rows(),
-                            paths));
-        }
-        if (raw.front().cols() < steps) {
-            throw ConfigurationError(
-                std::format("CorrelationContext random_numbers cover {} steps but the "
-                            "simulation grid requires {} steps",
-                            raw.front().cols(),
-                            steps));
-        }
         const Eigen::MatrixXd& chol = corr_->cholesky_matrix();
         Eigen::MatrixXd correlated = Eigen::MatrixXd::Zero(paths, steps);
         const auto row = static_cast<Index>(rn_index_);

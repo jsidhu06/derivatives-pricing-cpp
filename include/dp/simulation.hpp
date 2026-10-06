@@ -1,5 +1,6 @@
 #pragma once
 
+#include "dp/contracts.hpp"
 #include "dp/dates.hpp"
 #include "dp/discount_curve.hpp"
 #include "dp/dividends.hpp"
@@ -19,7 +20,8 @@ namespace dp {
 
 /// Configuration of a simulation run. The start date is the market's pricing
 /// date; exactly one of {`end_date` + `num_steps`} or an explicit `time_grid`
-/// must be supplied.
+/// must be supplied. A process in a `CorrelationContext` must pass the
+/// context's grid as `time_grid`.
 struct SimulationConfig {
     int paths;
     std::optional<DateTime> end_date = std::nullopt;
@@ -92,12 +94,53 @@ struct SimulationResult {
     Eigen::MatrixXd normals;
 };
 
+/// Dates a simulation grid must hold beyond its uniform steps.
+struct GridEvents {
+    /// Contracts priced on the grid: each one's `contract_event_dates`
+    /// (maturity, discrete barrier monitoring dates).
+    // NOLINTNEXTLINE(readability-redundant-member-init): see ForwardInputs.
+    std::vector<OptionSpec> specs = {};
+    /// Each asset's cash dividends: ex-dates up to `end_date` (later ones
+    /// never affect the simulation).
+    // NOLINTNEXTLINE(readability-redundant-member-init): see ForwardInputs.
+    std::vector<DividendSchedule> dividends = {};
+    /// Any other dates.
+    // NOLINTNEXTLINE(readability-redundant-member-init): see ForwardInputs.
+    std::vector<DateTime> extra_dates = {};
+    /// Start of the dense uniform region (defaults to the pricing date).
+    std::optional<DateTime> grid_start = std::nullopt;
+};
+
+/// Simulation dates: `num_steps` equally spaced intervals over
+/// `[grid_start, end_date]`, merged with `pricing_date`, `end_date` and every
+/// date in `events`. Dates before `pricing_date` are dropped: the diffusion
+/// cannot start before the valuation date.
+///
+/// This is the grid to give a `CorrelationContext`: list every contract
+/// priced on it in `events.specs` and every asset's dividend schedule in
+/// `events.dividends`, e.g.
+/// `shared_time_grid(pricing, maturity, 52, {.specs = {call, barrier},
+/// .dividends = {gbm_a.discrete_dividends}})`. A process built from
+/// `end_date` + `num_steps` uses the same construction.
+[[nodiscard]] std::vector<DateTime> shared_time_grid(DateTime pricing_date,
+                                                     DateTime end_date,
+                                                     int num_steps,
+                                                     const GridEvents& events = {});
+
 /// Shared correlation context for multi-asset simulation. Holds a validated
-/// correlation matrix (with its Cholesky factor) and pre-generated independent
-/// standard-normal draws, one `(paths x steps)` matrix per asset. Processes
-/// built with the same context draw correlated shocks from these numbers, so
-/// `antithetic` / `moment_matching` do not apply and `simulate` consumes no
-/// randomness of its own.
+/// correlation matrix (with its Cholesky factor), the shared simulation grid,
+/// and pre-generated independent standard-normal draws, one `(paths x steps)`
+/// matrix per asset. Processes built with the same context draw correlated
+/// shocks from these numbers, so `antithetic` / `moment_matching` do not
+/// apply and `simulate` consumes no randomness of its own.
+///
+/// The time grid is part of the scenario: column k of the draws drives the
+/// interval (time_grid[k], time_grid[k+1]) for every asset, so every process
+/// in the context must simulate on exactly this grid. It must already contain
+/// every asset's ex-dividend dates and every contract's event dates
+/// (maturities, barrier monitoring dates); nothing is merged in later. Build
+/// it with `shared_time_grid`, listing every contract and dividend schedule
+/// in its `GridEvents`.
 ///
 /// Share one instance between processes via `std::shared_ptr`; the context is
 /// immutable after construction.
@@ -105,11 +148,23 @@ class CorrelationContext {
 public:
     /// Throws `ValidationError` when the matrix is not square/symmetric/
     /// unit-diagonal/positive-definite, when names are not unique or their
-    /// count differs from the matrix dimension, or when the random-number
-    /// matrices differ in count or shape.
+    /// count differs from the matrix dimension, when the time grid has fewer
+    /// than two dates or is not strictly ascending, or when the random-number
+    /// matrices differ in count or shape or their step count differs from the
+    /// grid's interval count.
     CorrelationContext(Eigen::MatrixXd correlation_matrix,
                        std::vector<Eigen::MatrixXd> random_numbers,
-                       std::vector<std::string> asset_names);
+                       std::vector<std::string> asset_names,
+                       std::vector<DateTime> time_grid);
+
+    /// Context whose independent draws are generated here (PCG64 + inverse
+    /// CDF), sized `paths x (time_grid.size() - 1)` per asset so they match
+    /// the grid by construction.
+    [[nodiscard]] static CorrelationContext from_seed(Eigen::MatrixXd correlation_matrix,
+                                                      std::vector<std::string> asset_names,
+                                                      std::vector<DateTime> time_grid,
+                                                      Eigen::Index paths,
+                                                      std::optional<std::uint64_t> seed);
 
     [[nodiscard]] const Eigen::MatrixXd& correlation_matrix() const noexcept {
         return correlation_matrix_;
@@ -123,6 +178,10 @@ public:
     [[nodiscard]] const std::vector<std::string>& asset_names() const noexcept {
         return asset_names_;
     }
+    /// The shared simulation dates (strictly ascending).
+    [[nodiscard]] const std::vector<DateTime>& time_grid() const noexcept { return time_grid_; }
+    /// Number of simulated paths the draws cover.
+    [[nodiscard]] Eigen::Index paths() const noexcept { return random_numbers_.front().rows(); }
     /// Index of `name` in `asset_names()`; throws `ValidationError` if absent.
     [[nodiscard]] std::size_t asset_index(const std::string& name) const;
 
@@ -140,6 +199,7 @@ private:
     Eigen::MatrixXd cholesky_;
     std::vector<Eigen::MatrixXd> random_numbers_;
     std::vector<std::string> asset_names_;
+    std::vector<DateTime> time_grid_;
 };
 
 /// Common state and machinery shared by the path processes: market data, the
@@ -193,8 +253,13 @@ protected:
     PathProcess& operator=(PathProcess&&) = default;
 
     /// Merge dividend ex-dates into the generated grid (call from the derived
-    /// constructor after normalising the schedule).
+    /// constructor after normalising the schedule). Under a correlation
+    /// context nothing is merged: in-horizon ex-dates must already be on the
+    /// shared grid, else `ValidationError`.
     void register_grid_dates(const DividendSchedule& dividends);
+    /// Under a correlation context: throws `ValidationError` naming any of
+    /// `dates` inside the shared grid's span but missing from it.
+    void require_on_context_grid(const std::vector<DateTime>& dates) const;
 
     /// Grid pieces shared by every `simulate` implementation.
     struct GridBundle {
@@ -212,6 +277,10 @@ protected:
                                                Eigen::Index steps) const;
 
 private:
+    /// Under a correlation context: the config's explicit grid must equal the
+    /// context's, start at the pricing date, and match its path count.
+    void validate_against_context() const;
+
     MarketData market_data_;
     SimulationConfig config_;
     std::shared_ptr<const CorrelationContext> corr_;

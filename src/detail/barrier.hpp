@@ -28,20 +28,7 @@ inline VanillaSpec vanilla_equivalent_spec(const BarrierSpec& barrier) {
 
 /// Monitoring dates for a DISCRETE barrier; nullopt for CONTINUOUS.
 inline std::optional<std::vector<DateTime>> barrier_monitoring_dates(const ValuationState& state) {
-    const auto& spec = std::get<BarrierSpec>(state.spec);
-    if (spec.monitoring() == BarrierMonitoring::Continuous) {
-        return std::nullopt;
-    }
-    if (spec.monitoring_dates().has_value()) {
-        return spec.monitoring_dates();
-    }
-    // N+1 points from pricing_date to maturity; drop t=0 to leave N dates at
-    // T/N, 2T/N, ..., T (the academic convention for discrete monitoring).
-    auto grid = date_range(state.pricing_date(),
-                           state.maturity(),
-                           static_cast<std::size_t>(*spec.num_observations()) + 1);
-    grid.erase(grid.begin());
-    return grid;
+    return std::get<BarrierSpec>(state.spec).monitoring_schedule(state.pricing_date());
 }
 
 /// True only if the barrier has been hit AND that hit is observable at the

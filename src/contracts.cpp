@@ -165,4 +165,35 @@ std::optional<OptionType> option_type_of(const OptionSpec& spec) {
         spec);
 }
 
+std::optional<std::vector<DateTime>> BarrierSpec::monitoring_schedule(DateTime pricing_date) const {
+    if (p_.monitoring == BarrierMonitoring::Continuous) {
+        return std::nullopt;
+    }
+    if (p_.monitoring_dates.has_value()) {
+        return p_.monitoring_dates;
+    }
+    // N+1 points from pricing_date to maturity; drop t=0 to leave N dates at
+    // T/N, 2T/N, ..., T (the academic convention for discrete monitoring).
+    auto grid = date_range(
+        pricing_date, p_.maturity, static_cast<std::size_t>(p_.num_observations.value_or(0)) + 1);
+    grid.erase(grid.begin());
+    return grid;
+}
+
+std::vector<DateTime> contract_event_dates(const OptionSpec& spec, DateTime pricing_date) {
+    std::set<DateTime> dates{maturity_of(spec)};
+    if (const auto* barrier = std::get_if<BarrierSpec>(&spec)) {
+        if (const auto schedule = barrier->monitoring_schedule(pricing_date)) {
+            dates.insert(schedule->begin(), schedule->end());
+        }
+    }
+    std::vector<DateTime> result;
+    for (const DateTime d : dates) {
+        if (d >= pricing_date) {
+            result.push_back(d);
+        }
+    }
+    return result;
+}
+
 }  // namespace dp

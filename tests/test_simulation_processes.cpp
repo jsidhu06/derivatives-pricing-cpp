@@ -14,6 +14,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <memory>
@@ -86,16 +88,24 @@ double merton_price(OptionType type,
     return price;
 }
 
+/// Uniform grid from the pricing date to maturity with `steps` intervals.
+std::vector<DateTime> uniform_grid(int steps) {
+    return shared_time_grid(kPricingDate, kMaturity, steps);
+}
+
 std::shared_ptr<const CorrelationContext> two_asset_context(double rho,
                                                             Eigen::Index paths,
-                                                            Eigen::Index steps,
+                                                            int steps,
                                                             std::uint64_t seed = 7) {
     Eigen::MatrixXd corr(2, 2);
     corr << 1.0, rho, rho, 1.0;
-    return std::make_shared<const CorrelationContext>(
-        corr,
-        CorrelationContext::standard_normals(2, paths, steps, seed),
-        std::vector<std::string>{"asset_a", "asset_b"});
+    return std::make_shared<const CorrelationContext>(CorrelationContext::from_seed(
+        corr, {"asset_a", "asset_b"}, uniform_grid(steps), paths, seed));
+}
+
+/// Config for a process on `context`'s shared grid.
+SimulationConfig shared_config(const std::shared_ptr<const CorrelationContext>& context) {
+    return {.paths = static_cast<int>(context->paths()), .time_grid = context->time_grid()};
 }
 
 }  // namespace
@@ -250,46 +260,48 @@ TEST_CASE("CorrelationContext validation", "[processes][correlation]") {
     const auto rn = [](std::size_t n) { return CorrelationContext::standard_normals(n, 4, 3, 1); };
     const std::vector<std::string> names{"a", "b"};
 
-    CHECK_THROWS_MATCHES(CorrelationContext(Eigen::MatrixXd::Ones(2, 3), rn(2), names),
-                         ValidationError,
-                         message_contains("must be square"));
+    CHECK_THROWS_MATCHES(
+        CorrelationContext(Eigen::MatrixXd::Ones(2, 3), rn(2), names, uniform_grid(3)),
+        ValidationError,
+        message_contains("must be square"));
 
     Eigen::MatrixXd asymmetric(2, 2);
     asymmetric << 1.0, 0.5, 0.3, 1.0;
-    CHECK_THROWS_MATCHES(CorrelationContext(asymmetric, rn(2), names),
+    CHECK_THROWS_MATCHES(CorrelationContext(asymmetric, rn(2), names, uniform_grid(3)),
                          ValidationError,
                          message_contains("must be symmetric"));
 
     Eigen::MatrixXd bad_diagonal(2, 2);
     bad_diagonal << 1.1, 0.0, 0.0, 1.0;
-    CHECK_THROWS_MATCHES(CorrelationContext(bad_diagonal, rn(2), names),
+    CHECK_THROWS_MATCHES(CorrelationContext(bad_diagonal, rn(2), names, uniform_grid(3)),
                          ValidationError,
                          message_contains("diagonal must be 1"));
 
     Eigen::MatrixXd not_pd(2, 2);
     not_pd << 1.0, 1.5, 1.5, 1.0;
-    CHECK_THROWS_MATCHES(CorrelationContext(not_pd, rn(2), names),
+    CHECK_THROWS_MATCHES(CorrelationContext(not_pd, rn(2), names, uniform_grid(3)),
                          ValidationError,
                          message_contains("not positive-definite"));
 
     const Eigen::MatrixXd identity = Eigen::MatrixXd::Identity(2, 2);
-    CHECK_THROWS_MATCHES(CorrelationContext(identity, rn(2), {"a", "a"}),
+    CHECK_THROWS_MATCHES(CorrelationContext(identity, rn(2), {"a", "a"}, uniform_grid(3)),
                          ValidationError,
                          message_contains("unique"));
-    CHECK_THROWS_MATCHES(CorrelationContext(identity, rn(2), {"a", "b", "c"}),
+    CHECK_THROWS_MATCHES(CorrelationContext(identity, rn(2), {"a", "b", "c"}, uniform_grid(3)),
                          ValidationError,
                          message_contains("asset_names length"));
-    CHECK_THROWS_MATCHES(CorrelationContext(identity, rn(3), names),
+    CHECK_THROWS_MATCHES(CorrelationContext(identity, rn(3), names, uniform_grid(3)),
                          ValidationError,
                          message_contains("random_numbers count"));
 
     auto mismatched = rn(2);
     mismatched[1].resize(4, 5);
-    CHECK_THROWS_MATCHES(CorrelationContext(identity, std::move(mismatched), names),
-                         ValidationError,
-                         message_contains("identically shaped"));
+    CHECK_THROWS_MATCHES(
+        CorrelationContext(identity, std::move(mismatched), names, uniform_grid(3)),
+        ValidationError,
+        message_contains("identically shaped"));
 
-    const CorrelationContext valid(identity, rn(2), names);
+    const CorrelationContext valid(identity, rn(2), names, uniform_grid(3));
     CHECK(valid.asset_index("b") == 1);
     CHECK_THROWS_MATCHES(
         valid.asset_index("zzz"), ValidationError, message_contains("not found in asset_names"));
@@ -312,14 +324,14 @@ TEST_CASE("singular and near-singular correlation matrices", "[processes][correl
     // Perfectly correlated: positive semi-definite but singular, so there is
     // no Cholesky factor.
     const Eigen::MatrixXd singular = Eigen::MatrixXd::Ones(2, 2);
-    CHECK_THROWS_MATCHES(CorrelationContext(singular, rn(2), {"a", "b"}),
+    CHECK_THROWS_MATCHES(CorrelationContext(singular, rn(2), {"a", "b"}, uniform_grid(3)),
                          ValidationError,
                          message_contains("not positive-definite"));
 
     // Highly but not perfectly correlated assets must still be accepted.
     Eigen::MatrixXd near_singular(2, 2);
     near_singular << 1.0, 0.999, 0.999, 1.0;
-    const CorrelationContext context(near_singular, rn(2), {"a", "b"});
+    const CorrelationContext context(near_singular, rn(2), {"a", "b"}, uniform_grid(3));
     const Eigen::MatrixXd product =
         context.cholesky_matrix() * context.cholesky_matrix().transpose();
     CHECK((product - near_singular).cwiseAbs().maxCoeff() < 1e-12);
@@ -329,7 +341,7 @@ TEST_CASE("Cholesky factor reconstructs the correlation matrix", "[processes][co
     Eigen::MatrixXd corr(3, 3);
     corr << 1.0, 0.6, 0.3, 0.6, 1.0, 0.0, 0.3, 0.0, 1.0;
     const CorrelationContext context(
-        corr, CorrelationContext::standard_normals(3, 2, 2, 1), {"a", "b", "c"});
+        corr, CorrelationContext::standard_normals(3, 2, 2, 1), {"a", "b", "c"}, uniform_grid(2));
     const Eigen::MatrixXd product =
         context.cholesky_matrix() * context.cholesky_matrix().transpose();
     CHECK((product - corr).cwiseAbs().maxCoeff() < 1e-12);
@@ -340,8 +352,10 @@ TEST_CASE("Cholesky factor reconstructs the correlation matrix", "[processes][co
         0.3, 1.0, 0.0, -0.4,       //
         -0.2, 0.0, 1.0, 0.1,       //
         0.0, -0.4, 0.1, 1.0;
-    const CorrelationContext context4(
-        corr4, CorrelationContext::standard_normals(4, 2, 2, 1), {"a", "b", "c", "d"});
+    const CorrelationContext context4(corr4,
+                                      CorrelationContext::standard_normals(4, 2, 2, 1),
+                                      {"a", "b", "c", "d"},
+                                      uniform_grid(2));
     const Eigen::MatrixXd product4 =
         context4.cholesky_matrix() * context4.cholesky_matrix().transpose();
     CHECK((product4 - corr4).cwiseAbs().maxCoeff() < 1e-12);
@@ -364,10 +378,16 @@ TEST_CASE("correlated shocks reproduce the requested correlation",
           "[processes][correlation][statistical]") {
     const double rho = 0.7;
     const auto context = two_asset_context(rho, 20'000, 26);
-    const GbmProcess a(
-        md(), {.initial_value = 100.0, .volatility = 0.2}, config(20'000), context, "asset_a");
-    const GbmProcess b(
-        md(), {.initial_value = 80.0, .volatility = 0.3}, config(20'000), context, "asset_b");
+    const GbmProcess a(md(),
+                       {.initial_value = 100.0, .volatility = 0.2},
+                       shared_config(context),
+                       context,
+                       "asset_a");
+    const GbmProcess b(md(),
+                       {.initial_value = 80.0, .volatility = 0.3},
+                       shared_config(context),
+                       context,
+                       "asset_b");
 
     const SimulationResult ra = a.simulate(std::nullopt);
     const SimulationResult rb = b.simulate(std::nullopt);
@@ -403,23 +423,255 @@ TEST_CASE("correlated shocks reproduce the requested correlation",
     CHECK((ra.paths - ra2.paths).cwiseAbs().maxCoeff() == 0.0);
 }
 
-TEST_CASE("correlated shock matrices must cover the simulation shape", "[processes][correlation]") {
+TEST_CASE("correlated processes must simulate on the context's shared grid",
+          "[processes][correlation]") {
     const auto context = two_asset_context(0.5, 100, 5);
-    const GbmProcess wrong_paths(
-        md(), {.initial_value = 100.0, .volatility = 0.2}, config(200, 5), context, "asset_a");
+    const GbmParams params{.initial_value = 100.0, .volatility = 0.2};
+
+    // A generated grid (end_date + num_steps), even an identical one, is
+    // rejected: the grid must come from the context.
+    CHECK_THROWS_MATCHES(GbmProcess(md(), params, config(100, 5), context, "asset_a"),
+                         ValidationError,
+                         message_contains("must simulate on the context's shared grid"));
+
+    SimulationConfig other = shared_config(context);
+    other.time_grid = uniform_grid(6);
+    CHECK_THROWS_MATCHES(GbmProcess(md(), params, other, context, "asset_a"),
+                         ValidationError,
+                         message_contains("differs from its CorrelationContext's shared grid"));
+
+    SimulationConfig wrong_paths = shared_config(context);
+    wrong_paths.paths = 200;
+    CHECK_THROWS_MATCHES(GbmProcess(md(), params, wrong_paths, context, "asset_a"),
+                         ValidationError,
+                         message_contains("draws cover 100"));
+
+    const DateTime off_grid = kPricingDate + std::chrono::days{50};
+    GbmParams with_dividend = params;
+    with_dividend.discrete_dividends = {{off_grid, 1.0}};
     CHECK_THROWS_MATCHES(
-        wrong_paths.simulate(std::nullopt), ConfigurationError, message_contains("paths"));
-    const GbmProcess wrong_steps(
-        md(), {.initial_value = 100.0, .volatility = 0.2}, config(100, 10), context, "asset_a");
-    CHECK_THROWS_MATCHES(
-        wrong_steps.simulate(std::nullopt), ConfigurationError, message_contains("steps"));
+        GbmProcess(md(), with_dividend, shared_config(context), context, "asset_a"),
+        ValidationError,
+        message_contains("missing from its CorrelationContext's shared grid"));
+
+    SimulationConfig with_observation = shared_config(context);
+    with_observation.observation_dates = {off_grid};
+    CHECK_THROWS_MATCHES(GbmProcess(md(), params, with_observation, context, "asset_a"),
+                         ValidationError,
+                         message_contains("missing from its CorrelationContext's shared grid"));
+
+    const MarketData later(kPricingDate + std::chrono::days{1}, DiscountCurve::flat(kRate), "USD");
+    CHECK_THROWS_MATCHES(GbmProcess(later, params, shared_config(context), context, "asset_a"),
+                         ValidationError,
+                         message_contains("must start at the pricing date"));
+}
+
+TEST_CASE("CorrelationContext validates its time grid", "[processes][correlation]") {
+    const Eigen::MatrixXd identity = Eigen::MatrixXd::Identity(2, 2);
+    const std::vector<std::string> names{"a", "b"};
+    const auto rn = CorrelationContext::standard_normals(2, 4, 3, 1);
+
+    CHECK_THROWS_MATCHES(CorrelationContext(identity, rn, names, uniform_grid(4)),
+                         ValidationError,
+                         message_contains("step count (3) must equal the number of time_grid "
+                                          "intervals (4)"));
+    auto unsorted = uniform_grid(3);
+    std::swap(unsorted[1], unsorted[2]);
+    CHECK_THROWS_MATCHES(CorrelationContext(identity, rn, names, unsorted),
+                         ValidationError,
+                         message_contains("strictly ascending"));
+    CHECK_THROWS_MATCHES(CorrelationContext(identity, rn, names, {kPricingDate}),
+                         ValidationError,
+                         message_contains("at least two dates"));
+
+    const auto a = CorrelationContext::from_seed(identity, names, uniform_grid(12), 64, 7);
+    const auto b = CorrelationContext::from_seed(identity, names, uniform_grid(12), 64, 7);
+    CHECK(a.paths() == 64);
+    CHECK(a.random_numbers().front().cols() == 12);
+    CHECK(a.random_numbers().front() == b.random_numbers().front());
+    CHECK(a.time_grid() == uniform_grid(12));
+}
+
+TEST_CASE("shared_time_grid merges event dates into the uniform grid", "[processes][grid]") {
+    const DateTime ex_date = kPricingDate + std::chrono::days{136};
+    const DateTime early = kPricingDate - std::chrono::days{5};
+    const std::vector<DateTime> extra{ex_date, early};
+    const auto grid = shared_time_grid(kPricingDate, kMaturity, 12, {.extra_dates = extra});
+    CHECK(grid.front() == kPricingDate);
+    CHECK(grid.back() == kMaturity);
+    CHECK(std::binary_search(grid.begin(), grid.end(), ex_date));
+    CHECK_FALSE(std::binary_search(grid.begin(), grid.end(), early));
+    CHECK(grid.size() == 14);
+
+    // A process built from end_date + num_steps uses the same construction.
+    const GbmProcess process(
+        md(),
+        {.initial_value = 100.0, .volatility = 0.2, .discrete_dividends = {{ex_date, 1.0}}},
+        config(8, 12));
+    const std::vector<DateTime> ex_dates{ex_date};
+    CHECK(process.build_dates() ==
+          shared_time_grid(kPricingDate, kMaturity, 12, {.extra_dates = ex_dates}));
+}
+
+TEST_CASE("GridEvents collects contract and ex-dividend dates", "[processes][grid]") {
+    const BarrierSpec barrier({.option_type = OptionType::Call,
+                               .exercise_type = ExerciseType::European,
+                               .strike = 95.0,
+                               .maturity = kMaturity,
+                               .barrier = 120.0,
+                               .direction = BarrierDirection::Up,
+                               .action = BarrierAction::Out,
+                               .monitoring = BarrierMonitoring::Discrete,
+                               .currency = "USD",
+                               .num_observations = 5});
+    const DateTime ex_date = kPricingDate + std::chrono::days{136};
+    const DateTime late_ex = kMaturity + std::chrono::days{30};
+    const GbmParams params_a{.initial_value = 100.0,
+                             .volatility = 0.2,
+                             .discrete_dividends = {{ex_date, 2.5}, {late_ex, 1.0}}};
+    const GbmParams params_b{.initial_value = 90.0, .volatility = 0.3};
+
+    const auto grid =
+        shared_time_grid(kPricingDate,
+                         kMaturity,
+                         12,
+                         {.specs = {spec(OptionType::Call), barrier},
+                          .dividends = {params_a.discrete_dividends, params_b.discrete_dividends}});
+    for (const DateTime d : contract_event_dates(barrier, kPricingDate)) {
+        CHECK(std::binary_search(grid.begin(), grid.end(), d));
+    }
+    CHECK(std::binary_search(grid.begin(), grid.end(), ex_date));
+    // After end_date: never affects the simulation, so not on the grid.
+    CHECK_FALSE(std::binary_search(grid.begin(), grid.end(), late_ex));
+    CHECK(grid.back() == kMaturity);
+
+    // The intended workflow: one grid serves every asset and contract.
+    Eigen::MatrixXd corr(2, 2);
+    corr << 1.0, 0.5, 0.5, 1.0;
+    const auto context = std::make_shared<const CorrelationContext>(
+        CorrelationContext::from_seed(corr, {"asset_a", "asset_b"}, grid, 2000, 5));
+    const GbmProcess a(md(), params_a, shared_config(context), context, "asset_a");
+    const GbmProcess b(md(), params_b, shared_config(context), context, "asset_b");
+    for (const GbmProcess* process : {&a, &b}) {
+        CHECK(OptionValuation(*process, spec(OptionType::Call), PricingMethod::MonteCarlo)
+                  .present_value() > 0.0);
+        CHECK(OptionValuation(*process, barrier, PricingMethod::MonteCarlo).present_value() > 0.0);
+    }
+}
+
+TEST_CASE("contract_event_dates lists maturity and monitoring dates", "[processes][grid]") {
+    CHECK(contract_event_dates(spec(OptionType::Call), kPricingDate) ==
+          std::vector<DateTime>{kMaturity});
+    const BarrierSpec barrier({.option_type = OptionType::Call,
+                               .exercise_type = ExerciseType::European,
+                               .strike = 100.0,
+                               .maturity = kMaturity,
+                               .barrier = 120.0,
+                               .direction = BarrierDirection::Up,
+                               .action = BarrierAction::Out,
+                               .monitoring = BarrierMonitoring::Discrete,
+                               .currency = "USD",
+                               .num_observations = 4});
+    const auto dates = contract_event_dates(barrier, kPricingDate);
+    REQUIRE(dates.size() == 4);
+    CHECK(dates.back() == kMaturity);
+}
+
+TEST_CASE("increments stay correlated across one asset's ex-dividend date",
+          "[processes][correlation][statistical]") {
+    // Only asset_a pays a dividend. Before the grid lived on the context, its
+    // extra ex-date column shifted its draws against asset_b's and the
+    // realised correlation of later increments fell from 0.9 to about 0.
+    constexpr double kRho = 0.9;
+    const DateTime ex_date = kPricingDate + std::chrono::days{136};
+    const std::vector<DateTime> ex_dates{ex_date};
+    const auto grid = shared_time_grid(kPricingDate, kMaturity, 12, {.extra_dates = ex_dates});
+    Eigen::MatrixXd corr(2, 2);
+    corr << 1.0, kRho, kRho, 1.0;
+    const auto context = std::make_shared<const CorrelationContext>(
+        CorrelationContext::from_seed(corr, {"asset_a", "asset_b"}, grid, 20'000, 11));
+    const GbmProcess a(
+        md(),
+        {.initial_value = 100.0, .volatility = 0.2, .discrete_dividends = {{ex_date, 2.0}}},
+        shared_config(context),
+        context,
+        "asset_a");
+    const GbmProcess b(md(),
+                       {.initial_value = 100.0, .volatility = 0.2},
+                       shared_config(context),
+                       context,
+                       "asset_b");
+    const Eigen::MatrixXd pa = a.simulate(std::nullopt).paths;
+    const Eigen::MatrixXd pb = b.simulate(std::nullopt).paths;
+
+    const auto ex_step = std::distance(grid.begin(), std::find(grid.begin(), grid.end(), ex_date));
+    for (Eigen::Index step = 1; step < pa.cols(); ++step) {
+        if (step == ex_step) {
+            continue;  // the dividend drop is not a diffusion increment
+        }
+        const Eigen::ArrayXd za = (pa.col(step).array() / pa.col(step - 1).array()).log();
+        const Eigen::ArrayXd zb = (pb.col(step).array() / pb.col(step - 1).array()).log();
+        const Eigen::ArrayXd da = za - za.mean();
+        const Eigen::ArrayXd db = zb - zb.mean();
+        const double rho = (da * db).sum() / std::sqrt(da.square().sum() * db.square().sum());
+        CAPTURE(step, rho);
+        CHECK_THAT(rho, WithinAbs(kRho, 0.02));
+    }
+}
+
+TEST_CASE("valuations on a correlated process respect the shared grid",
+          "[processes][correlation][valuation]") {
+    const BarrierSpec barrier({.option_type = OptionType::Call,
+                               .exercise_type = ExerciseType::European,
+                               .strike = 100.0,
+                               .maturity = kMaturity,
+                               .barrier = 130.0,
+                               .direction = BarrierDirection::Up,
+                               .action = BarrierAction::Out,
+                               .monitoring = BarrierMonitoring::Discrete,
+                               .currency = "USD",
+                               .num_observations = 5});
+    const GbmParams params{.initial_value = 100.0, .volatility = 0.2};
+
+    SECTION("contract dates missing from the grid are rejected") {
+        const auto context = two_asset_context(0.5, 1000, 12);
+        const GbmProcess process(md(), params, shared_config(context), context, "asset_a");
+        CHECK_THROWS_MATCHES(OptionValuation(process, barrier, PricingMethod::MonteCarlo),
+                             ValidationError,
+                             message_contains("missing from the CorrelationContext"));
+    }
+    SECTION("a grid holding the contract dates prices") {
+        Eigen::MatrixXd corr(2, 2);
+        corr << 1.0, 0.5, 0.5, 1.0;
+        const auto context =
+            std::make_shared<const CorrelationContext>(CorrelationContext::from_seed(
+                corr,
+                {"asset_a", "asset_b"},
+                shared_time_grid(kPricingDate, kMaturity, 12, {.specs = {barrier}}),
+                1000,
+                3));
+        const GbmProcess process(md(), params, shared_config(context), context, "asset_a");
+        CHECK(OptionValuation(process, barrier, PricingMethod::MonteCarlo).present_value() > 0.0);
+    }
+    SECTION("numerical theta is rejected; pathwise theta works") {
+        const auto context = two_asset_context(0.5, 1000, 12);
+        const GbmProcess process(md(), params, shared_config(context), context, "asset_a");
+        const OptionValuation valuation(process, spec(OptionType::Call), PricingMethod::MonteCarlo);
+        CHECK_THROWS_MATCHES(valuation.theta({.method = GreekCalculationMethod::Numerical}),
+                             UnsupportedFeatureError,
+                             message_contains("Numerical theta moves the pricing date"));
+        CHECK(valuation.theta({.method = GreekCalculationMethod::Pathwise}) < 0.0);
+    }
 }
 
 TEST_CASE("correlated GBM prices European options like independent GBM",
           "[processes][correlation][statistical]") {
     const auto context = two_asset_context(0.6, 100'000, 26);
-    const GbmProcess correlated(
-        md(), {.initial_value = 100.0, .volatility = 0.2}, config(100'000), context, "asset_a");
+    const GbmProcess correlated(md(),
+                                {.initial_value = 100.0, .volatility = 0.2},
+                                shared_config(context),
+                                context,
+                                "asset_a");
     const UnderlyingData analytic(100.0, 0.2, md());
 
     const double mc = OptionValuation(correlated, spec(OptionType::Call), PricingMethod::MonteCarlo)
@@ -484,4 +736,70 @@ TEST_CASE("numerical Greeks work for JD and SRD underlyings", "[processes][valua
     const OptionValuation srd_call(srd, rate_call, PricingMethod::MonteCarlo);
     CHECK(srd_call.present_value() > 0.0);
     CHECK(srd_call.delta() > 0.0);
+}
+
+TEST_CASE("contracts maturing before the end of a shared grid price at maturity",
+          "[processes][correlation][grid][statistical]") {
+    // A shared grid usually runs past a short-dated contract's maturity. Every
+    // MC pricer must stop at the maturity column: the extra columns are
+    // simulated but must not touch the payoff, exercise or monitoring.
+    const DateTime short_maturity = make_datetime(2025, 7, 1);
+    const std::vector<DateTime> short_dates{short_maturity};
+    const auto grid = shared_time_grid(kPricingDate, kMaturity, 24, {.extra_dates = short_dates});
+    REQUIRE(grid.back() > short_maturity);
+    const auto context = std::make_shared<const CorrelationContext>(CorrelationContext::from_seed(
+        Eigen::MatrixXd::Identity(2, 2), {"asset_a", "asset_b"}, grid, 100'000, 3));
+    const GbmProcess process(md(),
+                             {.initial_value = 100.0, .volatility = 0.2},
+                             shared_config(context),
+                             context,
+                             "asset_a");
+    const UnderlyingData ud(100.0, 0.2, md());
+
+    const auto within_4_se = [&](const OptionSpec& contract, double reference) {
+        const OptionValuation mc(process, contract, PricingMethod::MonteCarlo);
+        const auto se = mc.std_error();
+        REQUIRE(se.has_value());
+        CAPTURE(mc.present_value(), reference, se.value_or(0.0));
+        CHECK(std::abs(mc.present_value() - reference) < 4.0 * se.value_or(0.0));
+    };
+    const auto vanilla = [&](OptionType type, ExerciseType exercise) {
+        return VanillaSpec({.option_type = type,
+                            .exercise_type = exercise,
+                            .strike = 100.0,
+                            .maturity = short_maturity,
+                            .currency = "USD"});
+    };
+
+    SECTION("European") {
+        const auto call = vanilla(OptionType::Call, ExerciseType::European);
+        within_4_se(call, OptionValuation(ud, call, PricingMethod::Analytical).present_value());
+    }
+    SECTION("American") {
+        const auto put = vanilla(OptionType::Put, ExerciseType::American);
+        within_4_se(
+            put,
+            OptionValuation(ud, put, PricingMethod::Binomial, BinomialParams{.num_steps = 2000})
+                .present_value());
+    }
+    SECTION("continuous barrier") {
+        const BarrierSpec barrier({.option_type = OptionType::Call,
+                                   .exercise_type = ExerciseType::European,
+                                   .strike = 100.0,
+                                   .maturity = short_maturity,
+                                   .barrier = 120.0,
+                                   .direction = BarrierDirection::Up,
+                                   .action = BarrierAction::Out,
+                                   .currency = "USD"});
+        within_4_se(barrier,
+                    OptionValuation(ud, barrier, PricingMethod::Analytical).present_value());
+    }
+    SECTION("pathwise greeks use the maturity column") {
+        const auto call = vanilla(OptionType::Call, ExerciseType::European);
+        const OptionValuation mc(process, call, PricingMethod::MonteCarlo);
+        const OptionValuation bsm(ud, call, PricingMethod::Analytical);
+        constexpr GreekOptions kPathwiseOptions{.method = GreekCalculationMethod::Pathwise};
+        CHECK_THAT(mc.delta(kPathwiseOptions), WithinRel(bsm.delta(), 1e-2));
+        CHECK_THAT(mc.vega(kPathwiseOptions), WithinRel(bsm.vega(), 2e-2));
+    }
 }

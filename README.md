@@ -19,7 +19,7 @@ engines (with barriers) and implied volatility are in place:
 | Dividends / forwards | `dp/dividends.hpp`, `dp/forward.hpp` | PV of cash dividends, forward price, put-call parity |
 | Normal distribution | `dp/math/normal.hpp` | CDF / PDF / quantile via Boost.Math |
 | Diagnostics | `dp/diagnostics.hpp` | pluggable warning handler, log level |
-| Contracts | `dp/contracts.hpp` | `VanillaSpec`, `PayoffSpec`, `BarrierSpec`; `OptionSpec` variant |
+| Contracts | `dp/contracts.hpp` | `VanillaSpec`, `PayoffSpec`, `BarrierSpec`; `OptionSpec` variant; `contract_event_dates` (maturity + monitoring dates a simulation grid must hold) |
 | Params | `dp/params.hpp` | `MonteCarloParams`, `BinomialParams`, `PdeParams` |
 | Underlying | `dp/underlying.hpp` | `UnderlyingData` with `with_*` bump helpers |
 | Valuation | `dp/valuation.hpp` | `OptionValuation` facade: cached PV, Monte Carlo standard error and Greeks, bump-and-revalue |
@@ -27,7 +27,7 @@ engines (with barriers) and implied volatility are in place:
 | Analytical barrier engine | (internal) | Reiner-Rubinstein closed forms for all 8 knock-in/out barrier types; Broadie-Glasserman-Kou discrete-monitoring correction; at-hit / at-expiry rebates; PDE-identity theta; barrier-clamped numerical greeks; inception-trigger handling |
 | Binomial engine | (internal) | CRR trees: vanilla + custom payoffs, European/American, escrowed discrete dividends, tree Greeks, arbitrage guard, European control variate; barriers via Boyle-Lau aligned trees (continuous) and half-step placement (discrete), knock-in two-state recursion, rebates, near-barrier greek guards |
 | PDE engine | (internal) | implicit / explicit / explicit-Hull / Rannacher-CN on spot or log-spot grids; PSOR or intrinsic American; dividend jump conditions; affine boundary models; CFL guard; grid Greeks; barriers via grid truncation (continuous KO), monitoring-date resets (discrete), two-surface coupled American knock-ins, and European KI parity |
-| Simulation | `dp/simulation.hpp` | `GbmProcess` / `JdProcess` (Merton) / `SrdProcess` (CIR, full-truncation Euler) + `SimulationConfig`: PCG64 + inverse-CDF normals, antithetic + moment matching, observation-date grids, discrete dividends; `CorrelationContext` for Cholesky-correlated multi-asset draws |
+| Simulation | `dp/simulation.hpp` | `GbmProcess` / `JdProcess` (Merton) / `SrdProcess` (CIR, full-truncation Euler) + `SimulationConfig`: PCG64 + inverse-CDF normals, antithetic + moment matching, observation-date grids, discrete dividends; `CorrelationContext` for Cholesky-correlated multi-asset draws on one shared time grid (built with `shared_time_grid`; every process is validated against it) |
 | MC engine | (internal) | European (discounted terminal payoff) and American (ridge-regularised Laguerre Longstaff-Schwartz); pathwise + likelihood-ratio Greeks; CRN by default; `std_error()` with antithetic pairs averaged, plus a high-error warning; barriers via pathwise monitoring checks (discrete, any process) and Brownian-bridge crossing probabilities (continuous, GBM), barrier-state LSM with optional barrier-aware basis |
 | Implied volatility | `dp/implied_volatility.hpp` | `implied_volatility(target, valuation, params)` for vanillas priced by `Analytical` (European), binomial or PDE (European/American): no-arbitrage bound checks, bracket expansion, Boost.Math safeguarded Newton-Raphson (analytical / numerical vega, bisection fallback), bisection and TOMS 748 |
 
