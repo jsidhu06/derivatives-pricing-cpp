@@ -22,6 +22,11 @@
 /// references to it stay valid when the facade is moved.
 namespace dp::detail {
 
+/// Non-owning pointer to an optional curve; null when it is absent.
+[[nodiscard]] inline const DiscountCurve* curve_or_null(const std::optional<DiscountCurve>& curve) {
+    return curve.has_value() ? &*curve : nullptr;
+}
+
 /// Either a deterministic-engine underlying (`UnderlyingData`) or a Monte
 /// Carlo path process (GBM, jump diffusion, or square-root diffusion).
 /// Forwards the accessors the alternatives share, so engines are written

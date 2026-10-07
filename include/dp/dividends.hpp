@@ -26,8 +26,13 @@ using DividendSchedule = std::vector<Dividend>;
 
 /// Present value, as of `start_date`, of dividends with ex-dates in the range.
 ///
-/// Discounting uses `discount_curve` anchored at `curve_date`:
-/// `PV = sum amount * D(t_ex) / D(t_start)`.
+/// Each dividend is discounted from its ex-date back to `start_date` at the
+/// cost of carry `r - q` (QuantLib's convention): `PV = sum amount * df_r / df_q`,
+/// where `df_r = D_r(t_ex) / D_r(t_start)` and `df_q = D_q(t_ex) / D_q(t_start)`,
+/// both curves anchored at `curve_date`. Grown at `r - q` alongside the stock,
+/// this is the dividend on its ex-date, so the escrowed forward
+/// `(S - PV) * D_q / D_r` equals the spot-drop forward. A null
+/// `dividend_curve` means `q = 0`.
 ///
 /// When `include_start` is true the range is closed on the left
 /// (`start <= ex <= end`) — the convention for computing the clean spot at
@@ -44,6 +49,7 @@ using DividendSchedule = std::vector<Dividend>;
     const DiscountCurve& discount_curve,
     std::optional<DateTime> start_date = std::nullopt,
     DayCountConvention day_count_convention = DayCountConvention::Act365F,
-    bool include_start = true);
+    bool include_start = true,
+    const DiscountCurve* dividend_curve = nullptr);
 
 }  // namespace dp

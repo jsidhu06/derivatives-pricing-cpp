@@ -4,6 +4,7 @@
 #include "dp/enums.hpp"
 #include "dp/forward.hpp"
 #include "dp/market_data.hpp"
+#include "dp/params.hpp"
 #include "dp/underlying.hpp"
 #include "dp/valuation.hpp"
 
@@ -15,6 +16,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <optional>
 #include <span>
 #include <string>
 
@@ -112,6 +114,49 @@ TEST_CASE("BSM satisfies put-call parity", "[bsm][parity]") {
                                                105.0);
         CHECK_THAT(c - p, WithinRel(rhs, 1e-10));
     }
+}
+
+TEST_CASE("yield plus cash dividends: all deterministic engines share QuantLib's forward",
+          "[bsm][parity][dividends]") {
+    // Cash dividends are discounted at r - q, as in QuantLib. With a 6% yield
+    // and 3.0 dividends, discounting them at r instead is a ~0.1 parity error.
+    const auto r_curve = flat_curve(kPricingDate, kMaturity, kRate);
+    const auto q_curve = flat_curve(kPricingDate, kMaturity, 0.06);
+    const DividendSchedule divs{{make_datetime(2025, 4, 1), 3.0},
+                                {make_datetime(2025, 10, 1), 3.0}};
+    const dp::test::WarningCapture capture;
+    const UnderlyingData u(kSpot, 0.25, {kPricingDate, r_curve, "USD"}, divs, q_curve);
+    const double strike = 95.0;
+
+    // QuantLib 1.41 AnalyticDividendEuropeanEngine, same inputs.
+    CHECK_THAT(pv(u, spec(OptionType::Call, strike)), WithinRel(7.992752883037036, 1e-10));
+    CHECK_THAT(pv(u, spec(OptionType::Put, strike)), WithinRel(9.861867998924371, 1e-10));
+
+    const double rhs = put_call_parity_rhs({.spot = kSpot,
+                                            .pricing_date = kPricingDate,
+                                            .maturity = kMaturity,
+                                            .discount_curve = &r_curve,
+                                            .dividend_curve = &q_curve,
+                                            .discrete_dividends = divs},
+                                           strike);
+    const auto parity = [&](PricingMethod method, std::optional<ValuationParams> params) {
+        const auto price = [&](OptionType type) {
+            return OptionValuation(u, spec(type, strike), method, params).present_value();
+        };
+        return price(OptionType::Call) - price(OptionType::Put);
+    };
+    CHECK_THAT(parity(PricingMethod::Analytical, std::nullopt), WithinAbs(rhs, 1e-10));
+    CHECK_THAT(parity(PricingMethod::Binomial, BinomialParams{.num_steps = 500}),
+               WithinAbs(rhs, 1e-8));
+    // Spot-drop model; QuantLib's FD engine (400x800) gives 8.27647 / 10.14556.
+    CHECK_THAT(parity(PricingMethod::PdeFd, PdeParams{.spot_steps = 200, .time_steps = 200}),
+               WithinAbs(rhs, 5e-3));
+    CHECK_THAT(OptionValuation(u,
+                               spec(OptionType::Call, strike),
+                               PricingMethod::PdeFd,
+                               PdeParams{.spot_steps = 200, .time_steps = 200})
+                   .present_value(),
+               WithinRel(8.276471863320657, 5e-3));
 }
 
 // ---------------------------------------------------------------------------

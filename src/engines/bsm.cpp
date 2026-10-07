@@ -61,12 +61,15 @@ double BsmEngine::adjusted_spot() const {
     if (dividends.empty()) {
         return spot;
     }
+    const DiscountCurve* q_curve = detail::curve_or_null(state_.underlying.dividend_curve());
     const double pv_divs = pv_discrete_dividends(dividends,
                                                  state_.pricing_date(),
                                                  state_.maturity(),
                                                  state_.discount_curve(),
                                                  std::nullopt,
-                                                 state_.day_count_convention());
+                                                 state_.day_count_convention(),
+                                                 /*include_start=*/true,
+                                                 q_curve);
     return std::max(spot - pv_divs, 0.0);
 }
 

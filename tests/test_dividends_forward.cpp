@@ -98,6 +98,27 @@ TEST_CASE("pv_discrete_dividends forward-discounts to start_date", "[dividends]"
                WithinRel(expected, 1e-12));
 }
 
+TEST_CASE("pv_discrete_dividends discounts at r - q with a dividend curve", "[dividends]") {
+    const double r = 0.05;
+    const double q = 0.03;
+    const auto r_curve = flat_curve(kPricingDate, kMaturity, r);
+    const auto q_curve = flat_curve(kPricingDate, kMaturity, q);
+    const auto start = make_datetime(2025, 4, 1);
+    const auto ex = make_datetime(2025, 10, 1);
+    const DividendSchedule divs{{ex, 1.0}};
+
+    const double tau = dp::year_fraction(start, ex);
+    CHECK_THAT(dp::pv_discrete_dividends(divs,
+                                         kPricingDate,
+                                         kMaturity,
+                                         r_curve,
+                                         start,
+                                         dp::DayCountConvention::Act365F,
+                                         /*include_start=*/true,
+                                         &q_curve),
+               WithinRel(std::exp(-(r - q) * tau), 1e-12));
+}
+
 // ---------------------------------------------------------------------------
 // Forward price
 // ---------------------------------------------------------------------------
@@ -137,6 +158,36 @@ TEST_CASE("forward price with discrete dividends", "[forward]") {
     };
     const double pv_div = 0.5 * std::exp(-r * t_div);
     CHECK_THAT(dp::forward_price(inputs), WithinRel((spot - pv_div) * std::exp(r * ttm), 1e-12));
+}
+
+TEST_CASE("forward price with a yield and discrete dividends discounts at r - q", "[forward]") {
+    const double spot = 100.0;
+    const double r = 0.05;
+    const double q = 0.03;
+    const double amount = 2.0;
+    const auto r_curve = flat_curve(kPricingDate, kMaturity, r);
+    const auto q_curve = flat_curve(kPricingDate, kMaturity, q);
+    const auto ex = make_datetime(2025, 7, 1);
+    const double ttm = dp::year_fraction(kPricingDate, kMaturity);
+    const double t_div = dp::year_fraction(kPricingDate, ex);
+
+    const ForwardInputs inputs{
+        .spot = spot,
+        .pricing_date = kPricingDate,
+        .maturity = kMaturity,
+        .discount_curve = &r_curve,
+        .dividend_curve = &q_curve,
+        .discrete_dividends = {{ex, amount}},
+    };
+    const dp::test::WarningCapture capture;
+    const double fwd = dp::forward_price(inputs);
+
+    const double pv_div = amount * std::exp(-(r - q) * t_div);
+    CHECK_THAT(fwd, WithinRel((spot - pv_div) * std::exp((r - q) * ttm), 1e-12));
+    // Spot-drop view: grow S to the ex-date, drop D, grow to maturity.
+    const double spot_drop =
+        (spot * std::exp((r - q) * t_div) - amount) * std::exp((r - q) * (ttm - t_div));
+    CHECK_THAT(fwd, WithinRel(spot_drop, 1e-12));
 }
 
 TEST_CASE("forward price warns when both dividend inputs are supplied", "[forward]") {

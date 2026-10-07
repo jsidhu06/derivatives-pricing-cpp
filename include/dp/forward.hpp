@@ -13,7 +13,8 @@ namespace dp {
 /// `dividend_curve` is an optional non-owning pointer to a continuous
 /// dividend-yield curve; `discrete_dividends` may be empty. When both are
 /// provided the continuous yield enters the cost-of-carry and the PV of the
-/// discrete dividends is subtracted from spot (a warning is emitted).
+/// discrete dividends, discounted at `r - q`, is subtracted from spot (a
+/// warning is emitted).
 struct ForwardInputs {
     double spot;
     DateTime pricing_date;
@@ -26,7 +27,9 @@ struct ForwardInputs {
     DayCountConvention day_count_convention = DayCountConvention::Act365F;
 };
 
-/// No-arbitrage forward price `F = (S * D_q(T) - PV(divs)) / D_r(T)`.
+/// No-arbitrage forward price `F = (S - PV(divs)) * D_q(T) / D_r(T)`, with
+/// `PV` at the cost of carry (see `pv_discrete_dividends`). This is QuantLib's
+/// forward and the expected terminal spot under the spot-drop model.
 /// Throws `ValidationError` unless `maturity > pricing_date`.
 [[nodiscard]] double forward_price(const ForwardInputs& inputs);
 

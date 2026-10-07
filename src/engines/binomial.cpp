@@ -149,13 +149,15 @@ const BinomialEngine::Setup& BinomialEngine::setup() const {
     const auto& dividends = state_.underlying.discrete_dividends();
     Eigen::ArrayXd pv_remaining;
     if (!dividends.empty()) {
+        const DiscountCurve* q_curve = detail::curve_or_null(state_.underlying.dividend_curve());
         const double pv_all = pv_discrete_dividends(dividends,
                                                     dates.front(),
                                                     dates.back(),
                                                     curve,
                                                     std::nullopt,
                                                     state_.day_count_convention(),
-                                                    /*include_start=*/true);
+                                                    /*include_start=*/true,
+                                                    q_curve);
         spot = std::max(spot - pv_all, 0.0);
         pv_remaining.resize(n + 1);
         for (int t = 0; t <= n; ++t) {
@@ -165,7 +167,8 @@ const BinomialEngine::Setup& BinomialEngine::setup() const {
                                                     curve,
                                                     dates[static_cast<std::size_t>(t)],
                                                     state_.day_count_convention(),
-                                                    /*include_start=*/false);
+                                                    /*include_start=*/false,
+                                                    q_curve);
         }
     }
 

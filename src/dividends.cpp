@@ -24,14 +24,16 @@ double pv_discrete_dividends(const DividendSchedule& dividends,
                              const DiscountCurve& discount_curve,
                              std::optional<DateTime> start_date,
                              DayCountConvention day_count_convention,
-                             bool include_start) {
+                             bool include_start,
+                             const DiscountCurve* dividend_curve) {
     if (dividends.empty()) {
         return 0.0;
     }
 
     const DateTime start = start_date.value_or(curve_date);
     const double t_start = year_fraction(curve_date, start, day_count_convention);
-    const double df_start = discount_curve.df(t_start);
+    const double r_df_start = discount_curve.df(t_start);
+    const double q_df_start = dividend_curve == nullptr ? 1.0 : dividend_curve->df(t_start);
 
     double pv = 0.0;
     for (const auto& [ex_date, amount] : dividends) {
@@ -41,7 +43,10 @@ double pv_discrete_dividends(const DividendSchedule& dividends,
             continue;
         }
         const double t_ex = year_fraction(curve_date, ex_date, day_count_convention);
-        pv += amount * discount_curve.df(t_ex) / df_start;
+        // Discount factors from start_date to the ex-date.
+        const double df_r = discount_curve.df(t_ex) / r_df_start;
+        const double df_q = dividend_curve == nullptr ? 1.0 : dividend_curve->df(t_ex) / q_df_start;
+        pv += amount * df_r / df_q;
     }
     return pv;
 }

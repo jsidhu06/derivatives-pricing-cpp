@@ -125,20 +125,21 @@ std::pair<double, double> price_bounds(const OptionValuation& valuation,
         return {std::max(0.0, strike - spot), strike};
     }
 
+    const auto& q_curve = underlying.dividend_curve();
     double spot = underlying.initial_value();
     if (!underlying.discrete_dividends().empty()) {
-        const double pv_dividends = pv_discrete_dividends(underlying.discrete_dividends(),
-                                                          valuation.pricing_date(),
-                                                          valuation.maturity(),
-                                                          valuation.discount_curve(),
-                                                          std::nullopt,
-                                                          valuation.day_count_convention());
+        const double pv_dividends =
+            pv_discrete_dividends(underlying.discrete_dividends(),
+                                  valuation.pricing_date(),
+                                  valuation.maturity(),
+                                  valuation.discount_curve(),
+                                  std::nullopt,
+                                  valuation.day_count_convention(),
+                                  /*include_start=*/true,
+                                  q_curve.has_value() ? &*q_curve : nullptr);
         spot = std::max(spot - pv_dividends, 0.0);
     }
-    double df_q = 1.0;
-    if (const auto& dividend_curve = underlying.dividend_curve(); dividend_curve.has_value()) {
-        df_q = dividend_curve->df(ttm);
-    }
+    const double df_q = q_curve.has_value() ? q_curve->df(ttm) : 1.0;
     const double df_r = valuation.discount_curve().df(ttm);
     if (is_call) {
         return {std::max(0.0, spot * df_q - strike * df_r), spot * df_q};

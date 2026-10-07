@@ -40,12 +40,14 @@ double forward_price(const ForwardInputs& inputs) {
                                                  inputs.maturity,
                                                  *inputs.discount_curve,
                                                  std::nullopt,
-                                                 inputs.day_count_convention);
+                                                 inputs.day_count_convention,
+                                                 /*include_start=*/true,
+                                                 inputs.dividend_curve);
 
     const double df_q = inputs.dividend_curve == nullptr ? 1.0 : inputs.dividend_curve->df(t);
     const double df_r = inputs.discount_curve->df(t);
 
-    return (inputs.spot * df_q - pv_divs) / df_r;
+    return (inputs.spot - pv_divs) * df_q / df_r;
 }
 
 double put_call_parity_rhs(const ForwardInputs& inputs, double strike) {

@@ -317,7 +317,10 @@ double log_forward(const detail::ValuationState& state) {
     const double df_q = q_curve.has_value() ? q_curve->df(ttm) : 1.0;
     double pv_divs = 0.0;
     for (const auto& [tau, amount] : dividend_tau_schedule(state)) {
-        pv_divs += amount * curve.df(std::max(ttm - tau, 0.0));
+        const double t_ex = std::max(ttm - tau, 0.0);
+        const double df_r_ex = curve.df(t_ex);
+        const double df_q_ex = q_curve.has_value() ? q_curve->df(t_ex) : 1.0;
+        pv_divs += amount * df_r_ex / df_q_ex;
     }
     return std::log(std::max(spot - pv_divs, 1.0e-8 * spot) * df_q / df_r);
 }
