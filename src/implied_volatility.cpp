@@ -1,6 +1,7 @@
 #include "dp/implied_volatility.hpp"
 
 #include "dp/contracts.hpp"
+#include "dp/diagnostics.hpp"
 #include "dp/dividends.hpp"
 #include "dp/exceptions.hpp"
 #include "dp/params.hpp"
@@ -35,6 +36,9 @@ void ImpliedVolParams::validate() const {
     }
     if (max_iter < 1) {
         throw ValidationError(std::format("max_iter must be >= 1, got {}", max_iter));
+    }
+    if (min_vega.has_value() && !(*min_vega >= 0.0)) {
+        throw ValidationError(std::format("min_vega must be >= 0, got {}", *min_vega));
     }
     if (initial_vol.has_value() && (!std::isfinite(*initial_vol) || *initial_vol <= 0.0)) {
         throw ValidationError(
@@ -79,22 +83,25 @@ const UnderlyingData& require_supported(const OptionValuation& valuation) {
     return *underlying;
 }
 
-/// Smallest volatility the CRR tree accepts: below |r - q| sqrt(dt) the
-/// no-arbitrage condition d < exp((r - q) dt) < u fails (1% safety margin).
+/// Smallest volatility the CRR tree accepts (with a 1% margin). The tree
+/// needs d < exp((r_i - q_i) dt) < u at every step i, with u = 1/d =
+/// exp(sigma sqrt(dt)), which holds exactly when sigma > |r_i - q_i| sqrt(dt)
+/// for all i. The bound therefore uses the per-step forward rates the tree
+/// uses: on a term curve some steps need more than the average rate suggests.
 double binomial_vol_floor(const OptionValuation& valuation, const UnderlyingData& underlying) {
     const auto& params = valuation.params();
     const BinomialParams binomial =
         params.has_value() && std::holds_alternative<BinomialParams>(*params)
             ? std::get<BinomialParams>(*params)
             : BinomialParams{};
+    const int steps = std::max(binomial.num_steps, 1);
     const double ttm = valuation.maturity_year_fraction();
-    const double dt = ttm / std::max(binomial.num_steps, 1);
-    const double r = -std::log(valuation.discount_curve().df(ttm)) / ttm;
-    double q = 0.0;
+    const Eigen::ArrayXd grid = Eigen::ArrayXd::LinSpaced(steps + 1, 0.0, ttm);
+    Eigen::ArrayXd net = valuation.discount_curve().step_forward_rates(grid);
     if (const auto& dividend_curve = underlying.dividend_curve(); dividend_curve.has_value()) {
-        q = -std::log(dividend_curve->df(ttm)) / ttm;
+        net -= dividend_curve->step_forward_rates(grid);
     }
-    return std::abs(r - q) * std::sqrt(std::max(dt, 1.0e-12)) * 1.01;
+    return net.abs().maxCoeff() * std::sqrt(ttm / steps) * 1.01;
 }
 
 /// No-arbitrage price interval. Americans: intrinsic to spot (call) or
@@ -211,7 +218,9 @@ ImpliedVolResult implied_volatility(double target_price,
     }
 
     const auto [min_price, max_price] = price_bounds(valuation, underlying);
-    if (target_price < min_price - tol || target_price > max_price + tol) {
+    // Rounding slack only: a quote outside the bounds has no implied vol.
+    const double bound_slack = 1.0e-12 * std::max(1.0, max_price);
+    if (target_price < min_price - bound_slack || target_price > max_price + bound_slack) {
         throw ValidationError(
             "target_price is outside no-arbitrage bounds for the provided inputs");
     }
@@ -220,16 +229,23 @@ ImpliedVolResult implied_volatility(double target_price,
         return OptionValuation(
             underlying.with_volatility(vol), valuation.spec(), method, valuation.params());
     };
-    // A price within `tol` of the target counts as an exact root: every
-    // Boost solver stops on a zero residual, which gives them the same
-    // price-tolerance semantics as the Python reference.
-    const auto accept_within_tol = [tol](double diff) {
-        return std::abs(diff) <= tol ? 0.0 : diff;
-    };
+    int pricings = 0;  // every model pricing, numerical-vega bumps included
     const auto residual = [&](double vol) {
-        return accept_within_tol(revalue(vol).present_value() - target_price);
+        ++pricings;
+        return revalue(vol).present_value() - target_price;
     };
+    // `tol` is a vol tolerance for every solver: bracketing solvers stop
+    // once the vol bracket is that narrow.
     const auto bracket_converged = [tol](double a, double b) { return std::abs(b - a) <= tol; };
+    const GreekCalculationMethod vega_method = method == PricingMethod::Analytical
+                                                   ? GreekCalculationMethod::Analytical
+                                                   : GreekCalculationMethod::Numerical;
+    // dPrice/dsigma: per-1% vega rescaled to per-1.0 vol.
+    const auto vega_of = [&](const OptionValuation& at_vol) {
+        // A numerical vega reprices twice (central bump).
+        pricings += vega_method == GreekCalculationMethod::Numerical ? 2 : 0;
+        return at_vol.vega({.method = vega_method}) * 100.0;
+    };
 
     double initial = 0.0;
     if (params.initial_vol.has_value()) {
@@ -243,7 +259,14 @@ ImpliedVolResult implied_volatility(double target_price,
 
     const Bracket bracket = bracket_volatility(residual, low, high);
     if (bracket.f_low > 0.0 || bracket.f_high < 0.0) {
-        throw ConvergenceError("Price not bracketed by vol_bounds; adjust bounds.");
+        throw ConvergenceError(std::format(
+            "Could not bracket the implied volatility: after widening, vol in [{:.6g}, {:.6g}] "
+            "gives price residuals [{:.6g}, {:.6g}] (need <= 0 at the low end and >= 0 at the "
+            "high end). Widen the vol bounds.",
+            bracket.low,
+            bracket.high,
+            bracket.f_low,
+            bracket.f_high));
     }
     initial = std::clamp(initial, bracket.low, bracket.high);
 
@@ -256,42 +279,75 @@ ImpliedVolResult implied_volatility(double target_price,
                                 .converged = bracket_converged(interval.first, interval.second)};
     };
 
+    // Conditioning check and diagnostics shared by every exit.
+    const ImpliedVolMethod solver =
+        params.method.value_or(method == PricingMethod::Analytical ? ImpliedVolMethod::NewtonRaphson
+                                                                   : ImpliedVolMethod::Brent);
+    const auto finish = [&](ImpliedVolResult result) {
+        if (result.converged) {
+            const double floor = params.min_vega.value_or(
+                1.0e-6 * std::max(underlying.initial_value(), valuation.strike().value_or(0.0)));
+            const double vega = vega_of(revalue(result.implied_vol));
+            if (vega < floor) {
+                warn(std::format(
+                    "Implied vol {:.6g} is not determined by the price: vega {:.3g} per unit vol "
+                    "is below min_vega={:.3g}, so rounding in the price is a large vol error "
+                    "(typical far out of the money or near intrinsic). Returning "
+                    "well_determined=false.",
+                    result.implied_vol,
+                    vega,
+                    floor));
+                result.well_determined = false;
+            }
+        }
+        result.function_evaluations = pricings;
+        detail::logger()->debug(
+            "Implied vol method={} converged={} well_determined={} iterations={} "
+            "function_evaluations={} implied_vol={:.6g}",
+            to_string(solver),
+            result.converged,
+            result.well_determined,
+            result.iterations,
+            result.function_evaluations,
+            result.implied_vol);
+        return result;
+    };
+    if (bracket.f_low == 0.0 || bracket.f_high == 0.0) {
+        // The root sits on a bracket end: nothing to solve.
+        return finish({.implied_vol = bracket.f_low == 0.0 ? bracket.low : bracket.high,
+                       .iterations = 0,
+                       .converged = true});
+    }
+
     ImpliedVolResult result{};
-    switch (params.method) {
+    switch (solver) {
         case ImpliedVolMethod::NewtonRaphson: {
             // Newton on (price residual, dPrice/dsigma): analytical vega for
-            // BSM, bump-and-revalue otherwise, rescaled from per-1% to per-1.0.
-            // Empty when Newton fails to reprice within tol.
+            // BSM, bump-and-revalue otherwise. Boost's safeguarded iteration
+            // stops on a relative step, so its digits are set for an absolute
+            // step of `tol` at the top of the bracket; the result is then
+            // certified in vol space. Empty when Newton cannot be certified.
             const auto newton = [&]() -> std::optional<ImpliedVolResult> {
-                const GreekCalculationMethod vega_method = method == PricingMethod::Analytical
-                                                               ? GreekCalculationMethod::Analytical
-                                                               : GreekCalculationMethod::Numerical;
-                // Remember the last evaluation: Boost returns the point it
-                // last priced when it stops on a zero (within-tol) residual.
-                double last_vol = std::numeric_limits<double>::quiet_NaN();
-                double last_residual = std::numeric_limits<double>::quiet_NaN();
                 const auto residual_and_vega = [&](double vol) {
+                    // One valuation per vol: numerical vega reuses its PV.
+                    ++pricings;
                     const OptionValuation at_vol = revalue(vol);
-                    last_vol = vol;
-                    last_residual = accept_within_tol(at_vol.present_value() - target_price);
-                    return std::pair{last_residual, at_vol.vega({.method = vega_method}) * 100.0};
+                    return std::pair{at_vol.present_value() - target_price, vega_of(at_vol)};
                 };
-                // Tight step tolerance: the within-tol price exit is the real
-                // stopping rule; this only bounds work near a converged root.
-                constexpr int kNewtonDigits = 40;
+                const int digits =
+                    std::clamp(static_cast<int>(std::ceil(1.0 - std::log2(tol / bracket.high))),
+                               1,
+                               std::numeric_limits<double>::digits);
                 auto iterations = static_cast<std::uintmax_t>(params.max_iter);
                 try {
-                    const double vol = boost::math::tools::newton_raphson_iterate(residual_and_vega,
-                                                                                  initial,
-                                                                                  bracket.low,
-                                                                                  bracket.high,
-                                                                                  kNewtonDigits,
-                                                                                  iterations);
-                    // Converged only if the result reprices within tol — Boost
-                    // also stops on step size or when pinned to a bracket end.
-                    const bool converged =
-                        vol == last_vol ? last_residual == 0.0 : residual(vol) == 0.0;
-                    if (!converged) {
+                    const double vol = boost::math::tools::newton_raphson_iterate(
+                        residual_and_vega, initial, bracket.low, bracket.high, digits, iterations);
+                    // The root is within tol of vol iff the residual (price
+                    // is increasing in vol) changes sign across vol +/- tol.
+                    const double below = std::max(vol - tol, bracket.low);
+                    const double above = std::min(vol + tol, bracket.high);
+                    const bool brackets_root = residual(below) <= 0.0 && residual(above) >= 0.0;
+                    if (!brackets_root) {  // also rejects NaN residuals
                         return std::nullopt;
                     }
                     return ImpliedVolResult{.implied_vol = vol,
@@ -329,12 +385,7 @@ ImpliedVolResult implied_volatility(double target_price,
         }
     }
 
-    detail::logger()->debug("Implied vol method={} converged={} iterations={} implied_vol={:.6g}",
-                            to_string(params.method),
-                            result.converged,
-                            result.iterations,
-                            result.implied_vol);
-    return result;
+    return finish(result);
 }
 
 }  // namespace dp
