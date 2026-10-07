@@ -543,6 +543,28 @@ struct OptionValuation::Impl {
         if (!state.params.has_value()) {
             throw ConfigurationError("control_variate_european requires method params");
         }
+        if (state.pricing_method != PricingMethod::Binomial) {
+            // The correction (european_analytical - european_numerical) is
+            // meant to hold only the engine's discretisation error. PDE_FD and
+            // MONTE_CARLO drop the spot by each dividend on its ex-date, while
+            // ANALYTICAL uses the escrowed model, so with cash dividends it
+            // would also hold the model gap and give a price neither model
+            // supports.
+            const auto& dividends = state.underlying.discrete_dividends();
+            const bool in_life = std::ranges::any_of(dividends, [&](const auto& dividend) {
+                return dividend.ex_date > state.pricing_date() &&
+                       dividend.ex_date <= state.maturity();
+            });
+            if (in_life) {
+                throw UnsupportedFeatureError(std::format(
+                    "control_variate_european is not supported for {} with discrete dividends: "
+                    "this engine drops the spot by each dividend on its ex-date, while the "
+                    "ANALYTICAL European reference uses the escrowed-dividend model, so the "
+                    "correction would mix two models. Use BINOMIAL (escrowed, like ANALYTICAL) "
+                    "or turn the control variate off.",
+                    name(state.pricing_method)));
+            }
+        }
         // The European leg keeps the contract shape (a barrier CV uses
         // European barrier legs, mirroring the Python dataclasses.replace).
         std::optional<OptionSpec> euro;

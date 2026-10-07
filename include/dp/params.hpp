@@ -27,6 +27,8 @@ struct MonteCarloParams {
     std::optional<double> std_error_warn_ratio = 0.1;
     /// Control-variate adjustment for American options using the European
     /// analytical price and the MC European price from the same simulation.
+    /// Rejected with discrete dividends: MC drops the spot on each ex-date,
+    /// while the analytical reference uses the escrowed model.
     bool control_variate_european = false;
     /// Augment the LSM basis with barrier-distance features (KO only).
     bool barrier_aware_basis = true;
@@ -37,7 +39,9 @@ struct MonteCarloParams {
 /// Parameters for binomial-tree valuation.
 struct BinomialParams {
     int num_steps = 500;
-    /// Hull-style control variate for American vanilla pricing.
+    /// Hull-style control variate for American vanilla pricing. Valid with
+    /// discrete dividends: the tree and the analytical reference both use the
+    /// escrowed-dividend model.
     bool control_variate_european = false;
 
     void validate() const;
@@ -67,6 +71,9 @@ struct PdeParams {
     int rannacher_steps = 2;
     PdeSpaceGrid space_grid = PdeSpaceGrid::Spot;
     PdeEarlyExercise american_solver = PdeEarlyExercise::GaussSeidel;
+    /// Hull-style control variate for American pricing. Rejected with
+    /// discrete dividends: the PDE drops the spot on each ex-date, while the
+    /// analytical reference uses the escrowed model.
     bool control_variate_european = false;
 
     void validate() const;

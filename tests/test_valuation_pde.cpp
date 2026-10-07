@@ -445,3 +445,41 @@ TEST_CASE("PSOR converges silently with the default parameters", "[pde][psor]") 
                  PdeParams{.american_solver = PdeEarlyExercise::GaussSeidel});
     CHECK_FALSE(capture.any_contains("PSOR"));
 }
+
+TEST_CASE("control variate requires the engine to share ANALYTICAL's dividend model",
+          "[pde][binomial][cv][dividends]") {
+    // ANALYTICAL and BINOMIAL use the escrowed model; PDE_FD drops the spot on
+    // the ex-date. Mixing the two in the correction is rejected.
+    const DateTime ex_date = kPricingDate + std::chrono::days{120};
+    const UnderlyingData with_dividend(100.0, 0.25, md(0.03), {{ex_date, 2.0}});
+    const auto amer = spec(OptionType::Put, ExerciseType::American, 100.0);
+    const auto euro = spec(OptionType::Put, ExerciseType::European, 100.0);
+
+    SECTION("PDE_FD is rejected") {
+        PdeParams cv{.spot_steps = 60, .time_steps = 60};
+        cv.control_variate_european = true;
+        CHECK_THROWS_MATCHES(pde_pv(with_dividend, amer, cv),
+                             UnsupportedFeatureError,
+                             message_contains("PDE_FD with discrete dividends"));
+    }
+    SECTION("BINOMIAL shares the escrowed model") {
+        const BinomialParams base{.num_steps = 300};
+        const BinomialParams cv{.num_steps = 300, .control_variate_european = true};
+        const auto tree = [&](const OptionSpec& s, const BinomialParams& p) {
+            return OptionValuation(with_dividend, s, PricingMethod::Binomial, p).present_value();
+        };
+        const double euro_bsm =
+            OptionValuation(with_dividend, euro, PricingMethod::Analytical).present_value();
+        CHECK_THAT(tree(amer, cv),
+                   WithinAbs(tree(amer, base) + (euro_bsm - tree(euro, base)), 1e-8));
+        // Same model: the correction is only the tree's small European error.
+        CHECK(std::abs(euro_bsm - tree(euro, base)) < 1e-2);
+    }
+    SECTION("dividends after maturity are ignored") {
+        const UnderlyingData after(
+            100.0, 0.25, md(0.03), {{kMaturity + std::chrono::days{30}, 2.0}});
+        PdeParams cv{.spot_steps = 60, .time_steps = 60};
+        cv.control_variate_european = true;
+        CHECK(pde_pv(after, amer, cv) > 0.0);
+    }
+}

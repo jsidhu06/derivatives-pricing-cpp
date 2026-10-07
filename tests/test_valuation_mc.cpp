@@ -621,3 +621,19 @@ TEST_CASE("pathwise, likelihood-ratio and numerical Greeks agree", "[mc][greeks]
         }
     }
 }
+
+TEST_CASE("MC control variate is rejected with discrete dividends", "[mc][cv][dividends]") {
+    // MC drops the spot on the ex-date; the ANALYTICAL reference is escrowed.
+    const DateTime ex_date = kPricingDate + std::chrono::days{120};
+    const GbmProcess process(
+        md(),
+        {.initial_value = 100.0, .volatility = 0.25, .discrete_dividends = {{ex_date, 2.0}}},
+        {.paths = 2'000, .end_date = kMaturity, .num_steps = 12});
+    const OptionValuation mc(process,
+                             spec(OptionType::Put, ExerciseType::American),
+                             PricingMethod::MonteCarlo,
+                             MonteCarloParams{.control_variate_european = true});
+    CHECK_THROWS_MATCHES(mc.present_value(),
+                         UnsupportedFeatureError,
+                         message_contains("MONTE_CARLO with discrete dividends"));
+}
