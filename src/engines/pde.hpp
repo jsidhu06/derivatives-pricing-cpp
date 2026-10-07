@@ -64,7 +64,8 @@ protected:
     /// legacy `smax_mult` span: the auto vanilla domain, or the barrier's
     /// far-field domain for the knock-in parity leg.
     [[nodiscard]] Solution compute_vanilla(std::optional<std::pair<double, double>> domain) const;
-    /// Black-Scholes-identity theta read from one solved surface.
+    /// Black-Scholes-identity theta read from one solved surface, with the
+    /// forward rates over the first step (see `OptionValuation::theta`).
     [[nodiscard]] double grid_theta_identity(const Solution& result) const;
     /// (delta, gamma) when the spot node sits in the American early-exercise
     /// region — the stencils are unreliable there; nullopt otherwise.

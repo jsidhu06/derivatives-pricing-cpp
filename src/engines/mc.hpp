@@ -47,10 +47,12 @@ public:
 
     [[nodiscard]] double delta_pathwise() const override;
     [[nodiscard]] double vega_pathwise() const override;
+    /// Zero rates to maturity, as the analytical theta (see `OptionValuation::theta`).
     [[nodiscard]] double theta_pathwise() const override;
     [[nodiscard]] double rho_pathwise() const override;
     [[nodiscard]] double delta_lr() const override;
     [[nodiscard]] double vega_lr() const override;
+    /// Zero rates to maturity, as the analytical theta (see `OptionValuation::theta`).
     [[nodiscard]] double theta_lr() const override;
     [[nodiscard]] double rho_lr() const override;
     [[nodiscard]] double gamma_pathwise_fd(std::optional<double> epsilon) const override;

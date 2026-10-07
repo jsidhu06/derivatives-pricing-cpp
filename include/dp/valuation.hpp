@@ -93,6 +93,22 @@ public:
     /// dV/dσ per 1 vol-point (1%) change.
     [[nodiscard]] double vega(GreekOptions options = {}) const;
     /// Value change per calendar day.
+    ///
+    /// On a flat curve every method agrees. On a sloped curve they use
+    /// different rates for the `r V` and carry terms, so they differ:
+    /// - Analytical (vanilla and barrier) and Monte Carlo pathwise /
+    ///   likelihood-ratio theta use the zero rates to maturity, the
+    ///   flat-equivalent rates of the closed-form price (as QuantLib's
+    ///   `BlackCalculator::theta`).
+    /// - Tree and PDE theta use the forward rates at the start of the curve:
+    ///   the one-day decay with today's calendar curve held fixed (as
+    ///   QuantLib's FD engines).
+    /// - Numerical theta moves the pricing date and keeps the curve, which is
+    ///   defined by time from the pricing date, so the curve slides with it:
+    ///   each tenor keeps its zero rate, and the decay picks up the forward
+    ///   rate at maturity.
+    ///
+    /// One convention across all methods is planned.
     [[nodiscard]] double theta(GreekOptions options = {}) const;
     /// dV/dr per 1% parallel rate move.
     [[nodiscard]] double rho(GreekOptions options = {}) const;

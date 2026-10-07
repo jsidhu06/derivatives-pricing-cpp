@@ -17,7 +17,8 @@ public:
     [[nodiscard]] double gamma() const override;
     /// Per 1 vol-point (1%) change.
     [[nodiscard]] double vega() const override;
-    /// Per calendar day (annual theta / 365).
+    /// Per calendar day (annual theta / 365), with the zero rates to maturity
+    /// (see `OptionValuation::theta`).
     [[nodiscard]] double theta() const override;
     /// Per 1% change in the continuously-compounded rate.
     [[nodiscard]] double rho() const override;

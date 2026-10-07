@@ -37,6 +37,8 @@ public:
     /// Requires `num_steps >= 2`.
     [[nodiscard]] double gamma() const override;
     /// Hull: (f_ud - f_0) / (2 dt), per calendar day. Requires `num_steps >= 2`.
+    /// Steps use the forward rates, so this is the decay with the calendar
+    /// curve held fixed (see `OptionValuation::theta`).
     [[nodiscard]] double theta() const override;
 
 protected:
