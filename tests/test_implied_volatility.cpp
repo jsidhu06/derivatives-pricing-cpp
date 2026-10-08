@@ -262,6 +262,32 @@ TEST_CASE("Newton-Raphson uses fewer pricer calls than bisection", "[implied_vol
     CHECK(newton.iterations < bisection.iterations);
 }
 
+TEST_CASE("Newton falls back to bisection when it cannot be certified", "[implied_vol]") {
+    // On a 16-step tree a deep in-the-money American call is close to
+    // piecewise linear in vol, so the numerical vega is a poor slope and
+    // Newton's result fails the vol-space check. The solver must then
+    // return exactly what plain bisection returns, having spent extra
+    // pricings on the failed Newton attempt.
+    const MarketData market(kPricingDate, DiscountCurve::flat(0.05), "USD");
+    const VanillaSpec call = vanilla(OptionType::Call, ExerciseType::American, 40.0);
+    const BinomialParams tree{.num_steps = 16};
+    const double target =
+        OptionValuation(UnderlyingData(100.0, 0.4, market), call, PricingMethod::Binomial, tree)
+            .present_value();
+    const OptionValuation start(
+        UnderlyingData(100.0, 0.02, market), call, PricingMethod::Binomial, tree);
+
+    const auto newton =
+        implied_volatility(target, start, {.method = ImpliedVolMethod::NewtonRaphson});
+    const auto bisection =
+        implied_volatility(target, start, {.method = ImpliedVolMethod::Bisection});
+    REQUIRE(newton.converged);
+    CHECK_THAT(newton.implied_vol, close_to(0.4, 0.0, 1e-6));
+    CHECK(newton.implied_vol == bisection.implied_vol);
+    CHECK(newton.iterations == bisection.iterations);
+    CHECK(newton.function_evaluations > bisection.function_evaluations);
+}
+
 // ---------------------------------------------------------------------------
 // Validation and unsupported inputs
 // ---------------------------------------------------------------------------

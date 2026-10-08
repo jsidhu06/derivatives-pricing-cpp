@@ -147,13 +147,36 @@ std::pair<double, double> price_bounds(const OptionValuation& valuation,
     return {std::max(0.0, strike * df_r - spot * df_q), strike * df_r};
 }
 
+/// The search interval [vol_lower, vol_upper], raised for the CRR tree to
+/// the smallest volatility it accepts.
+std::pair<double, double> search_interval(const ImpliedVolParams& params,
+                                          const OptionValuation& valuation,
+                                          const UnderlyingData& underlying) {
+    double low = params.vol_lower;
+    if (valuation.pricing_method() == PricingMethod::Binomial) {
+        low = std::max(low, binomial_vol_floor(valuation, underlying));
+    }
+    return {low, params.vol_upper};
+}
+
+/// Throws unless the quote lies within the no-arbitrage price bounds.
+void require_within_bounds(double target_price,
+                           const OptionValuation& valuation,
+                           const UnderlyingData& underlying) {
+    const auto [min_price, max_price] = price_bounds(valuation, underlying);
+    // Rounding slack only: a quote outside the bounds has no implied vol.
+    const double bound_slack = 1.0e-12 * std::max(1.0, max_price);
+    if (target_price < min_price - bound_slack || target_price > max_price + bound_slack) {
+        throw ValidationError(
+            "target_price is outside no-arbitrage bounds for the provided inputs");
+    }
+}
+
 /// Starting volatility for non-BSM Newton solves: 20% plus the extrinsic
-/// value scaled to a vol-like quantity, clipped to the search interval.
+/// value scaled to a vol-like quantity.
 double heuristic_initial_vol(const OptionValuation& valuation,
                              const UnderlyingData& underlying,
-                             double target_price,
-                             double low,
-                             double high) {
+                             double target_price) {
     const double spot = underlying.initial_value();
     const double strike = valuation.strike().value_or(0.0);
     const double time_sqrt = std::sqrt(std::max(valuation.maturity_year_fraction(), 1.0e-8));
@@ -162,8 +185,93 @@ double heuristic_initial_vol(const OptionValuation& valuation,
                                  : std::max(strike - spot, 0.0);
     const double extrinsic = std::max(target_price - intrinsic, 0.0);
     const double scale = std::max({spot, strike, 1.0});
-    return std::clamp(0.2 + 0.8 * (extrinsic / scale) / time_sqrt, low, high);
+    return 0.2 + 0.8 * (extrinsic / scale) / time_sqrt;
 }
+
+/// Newton's starting volatility: the caller's `initial_vol`, else the
+/// valuation's own volatility for BSM, else the heuristic; clipped to the
+/// search interval.
+double initial_vol(const ImpliedVolParams& params,
+                   const OptionValuation& valuation,
+                   const UnderlyingData& underlying,
+                   double target_price,
+                   double low,
+                   double high) {
+    double initial = 0.0;
+    if (params.initial_vol.has_value()) {
+        initial = *params.initial_vol;
+    } else if (valuation.pricing_method() == PricingMethod::Analytical) {
+        initial = underlying.volatility() > 0.0 ? underlying.volatility() : 0.2;
+    } else {
+        initial = heuristic_initial_vol(valuation, underlying, target_price);
+    }
+    return std::clamp(initial, low, high);
+}
+
+/// The function every solver finds the root of: P(vol) - target, the model
+/// price at `vol` less the quote. Counts every model pricing (numerical-vega
+/// bumps included), reported as `function_evaluations`.
+///
+/// Not copyable: Boost's solvers take their functor by value, and a copy
+/// would count pricings into its own counter. Pass it through a lambda that
+/// captures it by reference.
+class PriceResidual {
+public:
+    PriceResidual(const OptionValuation& valuation,
+                  const UnderlyingData& underlying,
+                  double target_price)
+        : valuation_(&valuation),
+          underlying_(&underlying),
+          target_price_(target_price),
+          vega_method_(valuation.pricing_method() == PricingMethod::Analytical
+                           ? GreekCalculationMethod::Analytical
+                           : GreekCalculationMethod::Numerical) {}
+    PriceResidual(const PriceResidual&) = delete;
+    PriceResidual& operator=(const PriceResidual&) = delete;
+    PriceResidual(PriceResidual&&) = delete;
+    PriceResidual& operator=(PriceResidual&&) = delete;
+    ~PriceResidual() = default;
+
+    /// The valuation with its volatility replaced by `vol`.
+    [[nodiscard]] OptionValuation revalue(double vol) const {
+        return {underlying_->with_volatility(vol),
+                valuation_->spec(),
+                valuation_->pricing_method(),
+                valuation_->params()};
+    }
+
+    /// P(vol) - target.
+    double operator()(double vol) {
+        ++pricings_;
+        return revalue(vol).present_value() - target_price_;
+    }
+
+    /// dP/dsigma per 1.0 of vol at an already-built valuation: analytical
+    /// for BSM, else a central bump (two more pricings).
+    double vega(const OptionValuation& at_vol) {
+        pricings_ += vega_method_ == GreekCalculationMethod::Numerical ? 2 : 0;
+        return at_vol.vega({.method = vega_method_}) * 100.0;  // vega is per 1% vol
+    }
+
+    /// The residual and its vol derivative from one valuation, for Newton.
+    std::pair<double, double> with_vega(double vol) {
+        ++pricings_;
+        const OptionValuation at_vol = revalue(vol);
+        return {at_vol.present_value() - target_price_, vega(at_vol)};
+    }
+
+    [[nodiscard]] int pricings() const noexcept { return pricings_; }
+    [[nodiscard]] const OptionValuation& valuation() const noexcept { return *valuation_; }
+    [[nodiscard]] const UnderlyingData& underlying() const noexcept { return *underlying_; }
+
+private:
+    // Non-owning: a PriceResidual lives inside one implied_volatility call.
+    const OptionValuation* valuation_;
+    const UnderlyingData* underlying_;
+    double target_price_;
+    GreekCalculationMethod vega_method_;
+    int pricings_ = 0;
+};
 
 /// Bracketing interval and the residuals at its ends.
 struct Bracket {
@@ -175,9 +283,9 @@ struct Bracket {
 
 /// Widen [low, high] until the residual changes sign: halve `low` (floored
 /// at 1e-12) while the price there is still too high, double `high` while
-/// it is still too low, at most `max_expansions` times each.
-template <class Residual>
-Bracket bracket_volatility(const Residual& residual, double low, double high) {
+/// it is still too low, at most 6 times each. Throws `ConvergenceError` if
+/// the sign change is still missing.
+Bracket bracket_implied_vol(PriceResidual& residual, double low, double high) {
     constexpr int kMaxExpansions = 6;
     Bracket b{.low = low, .high = high, .f_low = residual(low), .f_high = residual(high)};
     for (int i = 0; i < kMaxExpansions && b.f_low > 0.0; ++i) {
@@ -188,12 +296,139 @@ Bracket bracket_volatility(const Residual& residual, double low, double high) {
         b.high *= 2.0;
         b.f_high = residual(b.high);
     }
+    if (b.f_low > 0.0 || b.f_high < 0.0) {
+        throw ConvergenceError(std::format(
+            "Could not bracket the implied volatility: after widening, vol in [{:.6g}, {:.6g}] "
+            "gives price residuals [{:.6g}, {:.6g}] (need <= 0 at the low end and >= 0 at the "
+            "high end). Widen the vol bounds.",
+            b.low,
+            b.high,
+            b.f_low,
+            b.f_high));
+    }
     return b;
 }
 
-/// Midpoint of a bracketing solver's final interval.
-double bracket_root(const std::pair<double, double>& interval) {
-    return interval.first + (interval.second - interval.first) / 2.0;
+/// Stopping rule for the bracketing solvers: the vol bracket is within
+/// `tol`. `tol` is a vol tolerance for every solver.
+struct VolTolerance {
+    double tol;
+    bool operator()(double a, double b) const { return std::abs(b - a) <= tol; }
+};
+
+/// Result of a bracketing solver: the midpoint of its final interval.
+ImpliedVolResult bracketed_result(const std::pair<double, double>& interval,
+                                  std::uintmax_t iterations,
+                                  VolTolerance converged) {
+    return {.implied_vol = interval.first + (interval.second - interval.first) / 2.0,
+            .iterations = static_cast<int>(iterations),
+            .converged = converged(interval.first, interval.second)};
+}
+
+ImpliedVolResult solve_bisection(PriceResidual& residual,
+                                 const Bracket& bracket,
+                                 const ImpliedVolParams& params) {
+    auto iterations = static_cast<std::uintmax_t>(params.max_iter);
+    const auto interval =
+        boost::math::tools::bisect([&residual](double vol) { return residual(vol); },
+                                   bracket.low,
+                                   bracket.high,
+                                   VolTolerance{params.tol},
+                                   iterations);
+    return bracketed_result(interval, iterations, VolTolerance{params.tol});
+}
+
+/// `ImpliedVolMethod::Brent` runs Boost's TOMS 748 (Alefeld, Potra & Shi), a
+/// bracketing method from Brent's family that typically needs fewer
+/// evaluations; the name matches the Python API (scipy's `brentq`).
+ImpliedVolResult solve_toms748(PriceResidual& residual,
+                               const Bracket& bracket,
+                               const ImpliedVolParams& params) {
+    auto iterations = static_cast<std::uintmax_t>(params.max_iter);
+    const auto interval =
+        boost::math::tools::toms748_solve([&residual](double vol) { return residual(vol); },
+                                          bracket.low,
+                                          bracket.high,
+                                          bracket.f_low,
+                                          bracket.f_high,
+                                          VolTolerance{params.tol},
+                                          iterations);
+    return bracketed_result(interval, iterations, VolTolerance{params.tol});
+}
+
+/// Newton on (price residual, dPrice/dsigma), safeguarded by Boost within the
+/// bracket. Boost stops on a relative step, so its digits are set for an
+/// absolute step of `tol` at the top of the bracket; the result is then
+/// certified in vol space. Empty when Newton cannot be certified (the caller
+/// falls back to bisection). `initial` must lie in the bracket.
+std::optional<ImpliedVolResult> solve_newton(PriceResidual& residual,
+                                             const Bracket& bracket,
+                                             double initial,
+                                             const ImpliedVolParams& params) {
+    const double tol = params.tol;
+    const int digits = std::clamp(static_cast<int>(std::ceil(1.0 - std::log2(tol / bracket.high))),
+                                  1,
+                                  std::numeric_limits<double>::digits);
+    auto iterations = static_cast<std::uintmax_t>(params.max_iter);
+    try {
+        const double vol = boost::math::tools::newton_raphson_iterate(
+            [&residual](double trial) { return residual.with_vega(trial); },
+            initial,
+            bracket.low,
+            bracket.high,
+            digits,
+            iterations);
+        // The root is within tol of vol iff the residual (price is
+        // increasing in vol) changes sign across vol +/- tol.
+        const double below = std::max(vol - tol, bracket.low);
+        const double above = std::min(vol + tol, bracket.high);
+        const bool brackets_root = residual(below) <= 0.0 && residual(above) >= 0.0;
+        if (!brackets_root) {  // also rejects NaN residuals
+            return std::nullopt;
+        }
+        return ImpliedVolResult{
+            .implied_vol = vol, .iterations = static_cast<int>(iterations), .converged = true};
+    } catch (const boost::math::evaluation_error&) {
+        // Boost lost its bracket (e.g. a flat or noisy numerical vega); the
+        // bisection fallback is robust to that.
+        return std::nullopt;
+    }
+}
+
+/// Shared by every exit: flag a vol the price cannot determine (vega below
+/// `min_vega`), record the pricing count, and log the outcome.
+ImpliedVolResult finalise(ImpliedVolResult result,
+                          PriceResidual& residual,
+                          const ImpliedVolParams& params,
+                          ImpliedVolMethod solver) {
+    if (result.converged) {
+        const double floor = params.min_vega.value_or(
+            1.0e-6 * std::max(residual.underlying().initial_value(),
+                              residual.valuation().strike().value_or(0.0)));
+        const double vega = residual.vega(residual.revalue(result.implied_vol));
+        if (vega < floor) {
+            warn(std::format(
+                "Implied vol {:.6g} is not determined by the price: vega {:.3g} per unit vol "
+                "is below min_vega={:.3g}, so rounding in the price is a large vol error "
+                "(typical far out of the money or near intrinsic). Returning "
+                "well_determined=false.",
+                result.implied_vol,
+                vega,
+                floor));
+            result.well_determined = false;
+        }
+    }
+    result.function_evaluations = residual.pricings();
+    detail::logger()->debug(
+        "Implied vol method={} converged={} well_determined={} iterations={} "
+        "function_evaluations={} implied_vol={:.6g}",
+        to_string(solver),
+        result.converged,
+        result.well_determined,
+        result.iterations,
+        result.function_evaluations,
+        result.implied_vol);
+    return result;
 }
 
 }  // namespace
@@ -210,183 +445,38 @@ ImpliedVolResult implied_volatility(double target_price,
     }
     params.validate();
 
-    const PricingMethod method = valuation.pricing_method();
-    const double tol = params.tol;
-    double low = params.vol_lower;
-    const double high = params.vol_upper;
-    if (method == PricingMethod::Binomial) {
-        low = std::max(low, binomial_vol_floor(valuation, underlying));
-    }
+    const auto [low, high] = search_interval(params, valuation, underlying);
+    require_within_bounds(target_price, valuation, underlying);
 
-    const auto [min_price, max_price] = price_bounds(valuation, underlying);
-    // Rounding slack only: a quote outside the bounds has no implied vol.
-    const double bound_slack = 1.0e-12 * std::max(1.0, max_price);
-    if (target_price < min_price - bound_slack || target_price > max_price + bound_slack) {
-        throw ValidationError(
-            "target_price is outside no-arbitrage bounds for the provided inputs");
-    }
-
-    const auto revalue = [&](double vol) {
-        return OptionValuation(
-            underlying.with_volatility(vol), valuation.spec(), method, valuation.params());
-    };
-    int pricings = 0;  // every model pricing, numerical-vega bumps included
-    const auto residual = [&](double vol) {
-        ++pricings;
-        return revalue(vol).present_value() - target_price;
-    };
-    // `tol` is a vol tolerance for every solver: bracketing solvers stop
-    // once the vol bracket is that narrow.
-    const auto bracket_converged = [tol](double a, double b) { return std::abs(b - a) <= tol; };
-    const GreekCalculationMethod vega_method = method == PricingMethod::Analytical
-                                                   ? GreekCalculationMethod::Analytical
-                                                   : GreekCalculationMethod::Numerical;
-    // dPrice/dsigma: per-1% vega rescaled to per-1.0 vol.
-    const auto vega_of = [&](const OptionValuation& at_vol) {
-        // A numerical vega reprices twice (central bump).
-        pricings += vega_method == GreekCalculationMethod::Numerical ? 2 : 0;
-        return at_vol.vega({.method = vega_method}) * 100.0;
-    };
-
-    double initial = 0.0;
-    if (params.initial_vol.has_value()) {
-        initial = *params.initial_vol;
-    } else if (method == PricingMethod::Analytical) {
-        initial = underlying.volatility() > 0.0 ? underlying.volatility() : 0.2;
-    } else {
-        initial = heuristic_initial_vol(valuation, underlying, target_price, low, high);
-    }
-    initial = std::clamp(initial, low, high);
-
-    const Bracket bracket = bracket_volatility(residual, low, high);
-    if (bracket.f_low > 0.0 || bracket.f_high < 0.0) {
-        throw ConvergenceError(std::format(
-            "Could not bracket the implied volatility: after widening, vol in [{:.6g}, {:.6g}] "
-            "gives price residuals [{:.6g}, {:.6g}] (need <= 0 at the low end and >= 0 at the "
-            "high end). Widen the vol bounds.",
-            bracket.low,
-            bracket.high,
-            bracket.f_low,
-            bracket.f_high));
-    }
-    initial = std::clamp(initial, bracket.low, bracket.high);
-
-    const auto bisection = [&] {
-        auto iterations = static_cast<std::uintmax_t>(params.max_iter);
-        const auto interval = boost::math::tools::bisect(
-            residual, bracket.low, bracket.high, bracket_converged, iterations);
-        return ImpliedVolResult{.implied_vol = bracket_root(interval),
-                                .iterations = static_cast<int>(iterations),
-                                .converged = bracket_converged(interval.first, interval.second)};
-    };
-
-    // Conditioning check and diagnostics shared by every exit.
-    const ImpliedVolMethod solver =
-        params.method.value_or(method == PricingMethod::Analytical ? ImpliedVolMethod::NewtonRaphson
-                                                                   : ImpliedVolMethod::Brent);
-    const auto finish = [&](ImpliedVolResult result) {
-        if (result.converged) {
-            const double floor = params.min_vega.value_or(
-                1.0e-6 * std::max(underlying.initial_value(), valuation.strike().value_or(0.0)));
-            const double vega = vega_of(revalue(result.implied_vol));
-            if (vega < floor) {
-                warn(std::format(
-                    "Implied vol {:.6g} is not determined by the price: vega {:.3g} per unit vol "
-                    "is below min_vega={:.3g}, so rounding in the price is a large vol error "
-                    "(typical far out of the money or near intrinsic). Returning "
-                    "well_determined=false.",
-                    result.implied_vol,
-                    vega,
-                    floor));
-                result.well_determined = false;
-            }
-        }
-        result.function_evaluations = pricings;
-        detail::logger()->debug(
-            "Implied vol method={} converged={} well_determined={} iterations={} "
-            "function_evaluations={} implied_vol={:.6g}",
-            to_string(solver),
-            result.converged,
-            result.well_determined,
-            result.iterations,
-            result.function_evaluations,
-            result.implied_vol);
-        return result;
-    };
+    const ImpliedVolMethod solver = params.method.value_or(
+        valuation.pricing_method() == PricingMethod::Analytical ? ImpliedVolMethod::NewtonRaphson
+                                                                : ImpliedVolMethod::Brent);
+    // Clipped to [low, high], which the bracket contains (it only widens).
+    const double initial = initial_vol(params, valuation, underlying, target_price, low, high);
+    PriceResidual residual(valuation, underlying, target_price);
+    const Bracket bracket = bracket_implied_vol(residual, low, high);
     if (bracket.f_low == 0.0 || bracket.f_high == 0.0) {
         // The root sits on a bracket end: nothing to solve.
-        return finish({.implied_vol = bracket.f_low == 0.0 ? bracket.low : bracket.high,
-                       .iterations = 0,
-                       .converged = true});
+        return finalise({.implied_vol = bracket.f_low == 0.0 ? bracket.low : bracket.high,
+                         .iterations = 0,
+                         .converged = true},
+                        residual,
+                        params,
+                        solver);
     }
 
-    ImpliedVolResult result{};
     switch (solver) {
-        case ImpliedVolMethod::NewtonRaphson: {
-            // Newton on (price residual, dPrice/dsigma): analytical vega for
-            // BSM, bump-and-revalue otherwise. Boost's safeguarded iteration
-            // stops on a relative step, so its digits are set for an absolute
-            // step of `tol` at the top of the bracket; the result is then
-            // certified in vol space. Empty when Newton cannot be certified.
-            const auto newton = [&]() -> std::optional<ImpliedVolResult> {
-                const auto residual_and_vega = [&](double vol) {
-                    // One valuation per vol: numerical vega reuses its PV.
-                    ++pricings;
-                    const OptionValuation at_vol = revalue(vol);
-                    return std::pair{at_vol.present_value() - target_price, vega_of(at_vol)};
-                };
-                const int digits =
-                    std::clamp(static_cast<int>(std::ceil(1.0 - std::log2(tol / bracket.high))),
-                               1,
-                               std::numeric_limits<double>::digits);
-                auto iterations = static_cast<std::uintmax_t>(params.max_iter);
-                try {
-                    const double vol = boost::math::tools::newton_raphson_iterate(
-                        residual_and_vega, initial, bracket.low, bracket.high, digits, iterations);
-                    // The root is within tol of vol iff the residual (price
-                    // is increasing in vol) changes sign across vol +/- tol.
-                    const double below = std::max(vol - tol, bracket.low);
-                    const double above = std::min(vol + tol, bracket.high);
-                    const bool brackets_root = residual(below) <= 0.0 && residual(above) >= 0.0;
-                    if (!brackets_root) {  // also rejects NaN residuals
-                        return std::nullopt;
-                    }
-                    return ImpliedVolResult{.implied_vol = vol,
-                                            .iterations = static_cast<int>(iterations),
-                                            .converged = true};
-                } catch (const boost::math::evaluation_error&) {
-                    // Boost lost its bracket (e.g. a flat or noisy numerical
-                    // vega); the bisection fallback is robust to that.
-                    return std::nullopt;
-                }
-            };
-            if (auto newton_result = newton(); newton_result.has_value()) {
-                result = *newton_result;
-            } else {
-                result = bisection();
+        case ImpliedVolMethod::NewtonRaphson:
+            if (const auto newton = solve_newton(residual, bracket, initial, params)) {
+                return finalise(*newton, residual, params, solver);
             }
-            break;
-        }
+            return finalise(solve_bisection(residual, bracket, params), residual, params, solver);
         case ImpliedVolMethod::Bisection:
-            result = bisection();
-            break;
-        case ImpliedVolMethod::Brent: {
-            auto iterations = static_cast<std::uintmax_t>(params.max_iter);
-            const auto interval = boost::math::tools::toms748_solve(residual,
-                                                                    bracket.low,
-                                                                    bracket.high,
-                                                                    bracket.f_low,
-                                                                    bracket.f_high,
-                                                                    bracket_converged,
-                                                                    iterations);
-            result = {.implied_vol = bracket_root(interval),
-                      .iterations = static_cast<int>(iterations),
-                      .converged = bracket_converged(interval.first, interval.second)};
-            break;
-        }
+            return finalise(solve_bisection(residual, bracket, params), residual, params, solver);
+        case ImpliedVolMethod::Brent:
+            return finalise(solve_toms748(residual, bracket, params), residual, params, solver);
     }
-
-    return finish(result);
+    throw ConfigurationError("unknown ImpliedVolMethod");
 }
 
 }  // namespace dp
