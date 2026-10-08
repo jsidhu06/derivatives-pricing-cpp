@@ -11,6 +11,7 @@ add_executable(
     test_discount_curve.cpp
     test_dividends_forward.cpp
     test_engine_extremes.cpp
+    test_longstaff_schwartz.cpp
     test_enums.cpp
     test_implied_volatility.cpp
     test_market_data.cpp
