@@ -120,8 +120,9 @@ cmake --workflow --preset release   # configure + build + test in one go
 ```
 
 Presets: `debug`, `release`, `relwithdebinfo`, `tidy` (clang-tidy on every TU),
-`ci-*` variants with `-Werror`, and `clang-debug` / `clang-release` (clang-18,
-`-Werror`) to exercise the second compiler in the CI matrix locally:
+`ci-*` variants with `-Werror`, `ci-tsan` (ThreadSanitizer, clang-18; runs the
+`[threads]` tests), and `clang-debug` / `clang-release` (clang-18, `-Werror`) to
+exercise the second compiler in the CI matrix locally:
 
 ```bash
 cmake --workflow --preset clang-debug

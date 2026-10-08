@@ -97,6 +97,19 @@
         "clang",
         "ci-release"
       ]
+    },
+    {
+      "name": "ci-tsan",
+      "displayName": "CI ThreadSanitizer (clang, RelWithDebInfo, -Werror)",
+      "inherits": [
+        "clang",
+        "relwithdebinfo"
+      ],
+      "cacheVariables": {
+        "DP_ENABLE_SANITIZERS": "ON",
+        "DP_SANITIZER": "thread",
+        "DP_WARNINGS_AS_ERRORS": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -135,6 +148,10 @@
     {
       "name": "clang-release",
       "configurePreset": "clang-release"
+    },
+    {
+      "name": "ci-tsan",
+      "configurePreset": "ci-tsan"
     }
   ],
   "testPresets": [
@@ -198,6 +215,19 @@
       "name": "clang-release",
       "inherits": "base-test",
       "configurePreset": "clang-release"
+    },
+    {
+      "name": "ci-tsan",
+      "inherits": "base-test",
+      "configurePreset": "ci-tsan",
+      "environment": {
+        "TSAN_OPTIONS": "halt_on_error=1:second_deadlock_stack=1"
+      },
+      "filter": {
+        "include": {
+          "label": "^threads$"
+        }
+      }
     }
   ],
   "workflowPresets": [
@@ -266,6 +296,23 @@
         {
           "type": "test",
           "name": "clang-release"
+        }
+      ]
+    },
+    {
+      "name": "ci-tsan",
+      "steps": [
+        {
+          "type": "configure",
+          "name": "ci-tsan"
+        },
+        {
+          "type": "build",
+          "name": "ci-tsan"
+        },
+        {
+          "type": "test",
+          "name": "ci-tsan"
         }
       ]
     }

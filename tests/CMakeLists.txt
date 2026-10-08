@@ -4,6 +4,7 @@ add_executable(
     dp_tests
     test_barrier_cross_engine.cpp
     test_barrier_papers.cpp
+    test_concurrency.cpp
     test_contracts.cpp
     test_convergence.cpp
     test_dates.cpp

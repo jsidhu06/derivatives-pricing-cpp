@@ -53,6 +53,34 @@ jobs:
       - name: Test
         run: ctest --preset ${{ matrix.preset }} --parallel "$(nproc)"
 
+  thread-sanitizer:
+    name: ci-tsan (clang-18)
+    runs-on: ubuntu-24.04
+    env:
+      CC: clang-18
+      CXX: clang++-18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build clang-18
+      # clang-18's TSan cannot map its shadow memory with the 32 bits of mmap
+      # randomisation that Ubuntu 24.04 kernels use.
+      - name: Reduce ASLR entropy for TSan
+        run: sudo sysctl vm.mmap_rnd_bits=28
+      - name: Cache FetchContent dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/ci-tsan/_deps
+          key: deps-${{ runner.os }}-tsan-${{ hashFiles('cmake/Dependencies.cmake') }}
+      - name: Configure
+        run: cmake --preset ci-tsan
+      - name: Build
+        run: cmake --build --preset ci-tsan --parallel
+      - name: Test
+        run: ctest --preset ci-tsan --parallel "$(nproc)"
+
   clang-tidy:
     name: clang-tidy
     runs-on: ubuntu-24.04
