@@ -297,8 +297,10 @@ TEST_CASE("pathwise and LR Greeks are unbiased against BSM", "[mc][greeks][slow]
     // Tolerances come from the sampling error, not a fixed percentage: each
     // estimator is averaged over 32 independent seeds and the mean must sit
     // within 4 standard errors (seed-to-seed sd / sqrt(32)) of the closed
-    // form. That bound is 0.02-0.9% of the Greek, so a 1% bias fails, where
-    // a single seed with a 2% tolerance could hide it.
+    // form. The bound is 0.2-1% of the Greek for delta, rho and pathwise
+    // vega/theta, so a 1% bias fails there; the noisier pathwise gamma and
+    // LR vega/theta get 2-3.5%. A single seed with a fixed 2-5% tolerance
+    // allowed up to ~35 standard errors.
     const auto type = GENERATE(OptionType::Call, OptionType::Put);
     CAPTURE(type);
     const UnderlyingData ud(100.0, 0.20, md());
