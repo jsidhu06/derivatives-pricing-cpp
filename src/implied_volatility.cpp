@@ -395,8 +395,9 @@ std::optional<ImpliedVolResult> solve_newton(PriceResidual& residual,
     }
 }
 
-/// Shared by every exit: flag a vol the price cannot determine (vega below
-/// `min_vega`), record the pricing count, and log the outcome.
+/// Shared by every exit: mark the vol well determined only if the solve
+/// converged and vega reaches `min_vega` (warning when it does not), record
+/// the pricing count, and log the outcome.
 ImpliedVolResult finalise(ImpliedVolResult result,
                           PriceResidual& residual,
                           const ImpliedVolParams& params,
@@ -406,7 +407,8 @@ ImpliedVolResult finalise(ImpliedVolResult result,
             1.0e-6 * std::max(residual.underlying().initial_value(),
                               residual.valuation().strike().value_or(0.0)));
         const double vega = residual.vega(residual.revalue(result.implied_vol));
-        if (vega < floor) {
+        result.well_determined = vega >= floor;
+        if (!result.well_determined) {
             warn(std::format(
                 "Implied vol {:.6g} is not determined by the price: vega {:.3g} per unit vol "
                 "is below min_vega={:.3g}, so rounding in the price is a large vol error "
@@ -415,7 +417,6 @@ ImpliedVolResult finalise(ImpliedVolResult result,
                 result.implied_vol,
                 vega,
                 floor));
-            result.well_determined = false;
         }
     }
     result.function_evaluations = residual.pricings();

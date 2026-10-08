@@ -262,6 +262,19 @@ TEST_CASE("Newton-Raphson uses fewer pricer calls than bisection", "[implied_vol
     CHECK(newton.iterations < bisection.iterations);
 }
 
+TEST_CASE("an unconverged solve is never well determined", "[implied_vol]") {
+    // Three TOMS 748 iterations cannot reach a 1e-14 vol tolerance. The vol
+    // at the steep ATM point would pass the vega check, but an unconverged
+    // estimate is not a usable answer.
+    const double target = bsm(OptionType::Call, 0.35).present_value();
+    const auto result =
+        implied_volatility(target,
+                           bsm(OptionType::Call, 0.2),
+                           {.method = ImpliedVolMethod::Brent, .tol = 1e-14, .max_iter = 3});
+    CHECK_FALSE(result.converged);
+    CHECK_FALSE(result.well_determined);
+}
+
 TEST_CASE("Newton falls back to bisection when it cannot be certified", "[implied_vol]") {
     // On a 16-step tree a deep in-the-money American call is close to
     // piecewise linear in vol, so the numerical vega is a poor slope and

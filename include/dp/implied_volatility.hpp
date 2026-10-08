@@ -48,8 +48,8 @@ struct ImpliedVolParams {
     void validate() const;
 };
 
-/// Solver output. Use `implied_vol` only when both `converged` and
-/// `well_determined` are true.
+/// Solver output. Use `implied_vol` only when `well_determined` is true
+/// (which implies `converged`).
 struct ImpliedVolResult {
     double implied_vol = 0.0;
     /// Iterations of the final root finder; 0 when the root sat on a bracket
@@ -61,11 +61,12 @@ struct ImpliedVolResult {
     /// conditioning check, each numerical-vega bump counted. For tree and
     /// PDE engines this, not `iterations`, measures the cost.
     int function_evaluations = 0;
-    /// True when vega at the solution is at least `min_vega`, i.e. the price
-    /// actually pins the volatility down. A converged but not well-determined
-    /// result reprices the target, yet small rounding in the price would move
-    /// it a lot (far out of the money, near intrinsic).
-    bool well_determined = true;
+    /// True when the solve converged and vega at the solution is at least
+    /// `min_vega`, i.e. the price actually pins the volatility down; false
+    /// for a result that did not converge. A converged but not
+    /// well-determined result reprices the target, yet small rounding in the
+    /// price would move it a lot (far out of the money, near intrinsic).
+    bool well_determined = false;
 };
 
 /// Volatility at which `valuation` reprices to `target_price` (per unit of
