@@ -27,7 +27,7 @@ using DividendSchedule = std::vector<Dividend>;
 /// Present value, as of `start_date`, of dividends with ex-dates in the range.
 ///
 /// Each dividend is discounted from its ex-date back to `start_date` at the
-/// cost of carry `r - q` (QuantLib's convention): `PV = sum amount * df_r / df_q`,
+/// cost of carry `r - q` (QuantLib's convention): `PV = sum (amount * df_r / df_q)`,
 /// where `df_r = D_r(t_ex) / D_r(t_start)` and `df_q = D_q(t_ex) / D_q(t_start)`,
 /// both curves anchored at `curve_date`. Grown at `r - q` alongside the stock,
 /// this is the dividend on its ex-date, so the escrowed forward

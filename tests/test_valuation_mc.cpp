@@ -21,6 +21,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <optional>
 #include <string_view>
 #include <utility>
@@ -292,22 +293,56 @@ TEST_CASE("std_error rejects the MC control variate", "[mc][std_error][cv]") {
                          message_contains("std_error is not supported with control_variate"));
 }
 
-TEST_CASE("pathwise and LR Greeks agree with BSM analytical", "[mc][greeks]") {
+TEST_CASE("pathwise and LR Greeks are unbiased against BSM", "[mc][greeks][slow]") {
+    // Tolerances come from the sampling error, not a fixed percentage: each
+    // estimator is averaged over 32 independent seeds and the mean must sit
+    // within 4 standard errors (seed-to-seed sd / sqrt(32)) of the closed
+    // form. That bound is 0.02-0.9% of the Greek, so a 1% bias fails, where
+    // a single seed with a 2% tolerance could hide it.
     const auto type = GENERATE(OptionType::Call, OptionType::Put);
+    CAPTURE(type);
     const UnderlyingData ud(100.0, 0.20, md());
     const OptionValuation bsm(ud, spec(type), PricingMethod::Analytical);
-    const OptionValuation mc(gbm(200'000), spec(type), PricingMethod::MonteCarlo);
+    const GbmProcess process = gbm(20'000);
 
-    CHECK_THAT(mc.delta(kPathwise), WithinRel(bsm.delta(), 2e-2));
-    CHECK_THAT(mc.vega(kPathwise), WithinRel(bsm.vega(), 2e-2));
-    CHECK_THAT(mc.theta(kPathwise), WithinRel(bsm.theta(), 2e-2));
-    CHECK_THAT(mc.rho(kPathwise), WithinRel(bsm.rho(), 2e-2));
-    CHECK_THAT(mc.gamma(kPathwise), WithinRel(bsm.gamma(), 5e-2));
-
-    CHECK_THAT(mc.delta(kLikelihoodRatio), WithinRel(bsm.delta(), 2e-2));
-    CHECK_THAT(mc.vega(kLikelihoodRatio), WithinRel(bsm.vega(), 5e-2));
-    CHECK_THAT(mc.theta(kLikelihoodRatio), WithinRel(bsm.theta(), 5e-2));
-    CHECK_THAT(mc.rho(kLikelihoodRatio), WithinRel(bsm.rho(), 2e-2));
+    using Greek = double (OptionValuation::*)(GreekOptions) const;
+    struct Case {
+        const char* name;
+        Greek greek;
+        GreekOptions options;
+    };
+    const std::vector<Case> cases{
+        {"pathwise delta", &OptionValuation::delta, kPathwise},
+        {"pathwise gamma", &OptionValuation::gamma, kPathwise},
+        {"pathwise vega", &OptionValuation::vega, kPathwise},
+        {"pathwise theta", &OptionValuation::theta, kPathwise},
+        {"pathwise rho", &OptionValuation::rho, kPathwise},
+        {"LR delta", &OptionValuation::delta, kLikelihoodRatio},
+        {"LR vega", &OptionValuation::vega, kLikelihoodRatio},
+        {"LR theta", &OptionValuation::theta, kLikelihoodRatio},
+        {"LR rho", &OptionValuation::rho, kLikelihoodRatio},
+    };
+    constexpr int kSeeds = 32;
+    std::vector<double> sums(cases.size(), 0.0);
+    std::vector<double> sums_sq(cases.size(), 0.0);
+    for (unsigned long long seed = 1; seed <= kSeeds; ++seed) {
+        const OptionValuation mc(
+            process, spec(type), PricingMethod::MonteCarlo, MonteCarloParams{.random_seed = seed});
+        for (std::size_t i = 0; i < cases.size(); ++i) {
+            const double value = (mc.*cases[i].greek)(cases[i].options);
+            sums[i] += value;
+            sums_sq[i] += value * value;
+        }
+    }
+    for (std::size_t i = 0; i < cases.size(); ++i) {
+        const auto& [name, greek, options] = cases[i];
+        const double mean = sums[i] / kSeeds;
+        const double sd = std::sqrt((sums_sq[i] - kSeeds * mean * mean) / (kSeeds - 1));
+        const double se_of_mean = sd / std::sqrt(static_cast<double>(kSeeds));
+        const double reference = (bsm.*greek)({});
+        CAPTURE(name, mean, reference, se_of_mean);
+        CHECK(std::abs(mean - reference) < 4.0 * se_of_mean);
+    }
 }
 
 TEST_CASE("pathwise is the auto-selected Greek method for eligible MC", "[mc][greeks]") {
