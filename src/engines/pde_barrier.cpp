@@ -13,7 +13,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <format>
 #include <map>
 #include <memory>
 #include <optional>
@@ -53,6 +52,12 @@ using pde::validate_fd_inputs;
 
 namespace {
 
+using Mask = Eigen::Array<bool, Eigen::Dynamic, 1>;
+
+bool is_explicit(PdeMethod method) {
+    return method == PdeMethod::Explicit || method == PdeMethod::ExplicitHull;
+}
+
 /// Log-spot grid for a continuous knock-out: the barrier is a boundary node.
 /// Explicit-family schemes preserve Hull's dz scale; CN/IMPLICIT honor
 /// spot_steps directly.
@@ -64,7 +69,7 @@ SpaceGridBuild build_ko_continuous_log_grid(double smin_target,
                                             int spot_steps,
                                             int time_steps,
                                             PdeMethod method) {
-    const bool explicit_scheme = method == PdeMethod::Explicit || method == PdeMethod::ExplicitHull;
+    const bool explicit_scheme = is_explicit(method);
     double zlo = 0.0;
     double zhi = 0.0;
     if (direction == BarrierDirection::Down) {
@@ -112,7 +117,7 @@ ArrayXd subgrid_pde_step(const ArrayXd& v,
     const ArrayXd b_s = scaled.beta.segment(j_lo - 1, m);
     const ArrayXd c_s = scaled.alpha.segment(j_lo - 1, m);
 
-    if (method == PdeMethod::Explicit || method == PdeMethod::ExplicitHull) {
+    if (is_explicit(method)) {
         v_new.segment(j_lo, m) =
             (-a_s * v_prev.segment(j_lo - 1, m) + (1.0 - b_s) * v_prev.segment(j_lo, m) -
              c_s * v_prev.segment(j_lo + 1, m)) /
@@ -139,6 +144,283 @@ ArrayXd subgrid_pde_step(const ArrayXd& v,
             solve_tridiagonal_thomas(a_h.tail(m - 1), diag, c_h.head(m - 1), rhs);
     }
     return v_new;
+}
+
+/// Grid nodes on the knocked side of the barrier (at or beyond it).
+Mask knocked_nodes(const ArrayXd& S, double barrier, bool is_up) {
+    return is_up ? (S >= barrier).eval() : (S <= barrier).eval();
+}
+
+/// Continuous knock-in: on the hit side of the barrier node the option is
+/// already active, so the inactive surface takes the active values there.
+void couple_hit_side(ArrayXd& v_inact, const ArrayXd& v_act, Index j_barrier, bool is_up) {
+    if (!is_up) {
+        v_inact.head(j_barrier + 1) = v_act.head(j_barrier + 1);
+    } else {
+        v_inact.tail(v_act.size() - j_barrier) = v_act.tail(v_act.size() - j_barrier);
+    }
+}
+
+/// Vanilla payoff on the grid spots.
+ArrayXd vanilla_payoff(const ArrayXd& S, double strike, bool is_call) {
+    ArrayXd payoff(S.size());
+    if (is_call) {
+        payoff = (S - strike).cwiseMax(0.0);
+    } else {
+        payoff = (strike - S).cwiseMax(0.0);
+    }
+    return payoff;
+}
+
+/// Value a knock-out takes where the barrier is hit: the rebate if paid at
+/// hit, else the rebate paid at maturity discounted by `df_fwd` (the
+/// discount factor from the hit time to maturity). Zero without a rebate.
+double knock_out_rebate_value(const BarrierSpec& spec, double df_fwd) {
+    if (spec.rebate() == 0.0) {
+        return 0.0;
+    }
+    return spec.rebate_timing() == RebateTiming::AtHit ? spec.rebate() : spec.rebate() * df_fwd;
+}
+
+/// Dates on which both barrier solves act besides the regular time steps.
+/// Taus are rounded to 12 digits, as on the time grid.
+struct EventSchedule {
+    /// Cash dividends strictly inside (0, ttm), applied as jumps in the loop.
+    std::map<double, double> dividends;
+    /// Dividend going ex at maturity: applied to the terminal slice.
+    std::optional<double> maturity_dividend;
+    /// Dividend going ex on the pricing date: the price is read at spot - D.
+    std::optional<double> pricing_dividend;
+    std::set<double> monitoring;
+    /// Time grid holding every dividend and (discrete) monitoring tau.
+    ArrayXd tau_grid;
+
+    [[nodiscard]] bool is_monitoring(double tau) const { return monitoring.contains(round12(tau)); }
+    [[nodiscard]] std::optional<double> dividend_at(double tau) const {
+        const auto it = dividends.find(round12(tau));
+        return it == dividends.end() ? std::nullopt : std::optional<double>(it->second);
+    }
+};
+
+EventSchedule event_schedule(const detail::ValuationState& state,
+                             const std::vector<double>& monitoring_taus,
+                             bool continuous,
+                             double ttm,
+                             int time_steps) {
+    EventSchedule events;
+    for (const auto& [tau, amount] : dividend_tau_schedule(state)) {
+        events.dividends.emplace(tau, amount);
+    }
+    if (const auto it = events.dividends.find(0.0); it != events.dividends.end()) {
+        events.maturity_dividend = it->second;
+        events.dividends.erase(it);
+    }
+    if (const auto it = events.dividends.find(round12(ttm)); it != events.dividends.end()) {
+        events.pricing_dividend = it->second;
+        events.dividends.erase(it);
+    }
+    for (const double tau : monitoring_taus) {
+        events.monitoring.insert(round12(tau));
+    }
+    std::vector<double> extra_taus;
+    extra_taus.reserve(events.dividends.size());
+    for (const auto& [tau, amount] : events.dividends) {
+        extra_taus.push_back(tau);
+    }
+    if (!continuous) {
+        extra_taus.insert(extra_taus.end(), monitoring_taus.begin(), monitoring_taus.end());
+    }
+    events.tau_grid = build_tau_grid(ttm, time_steps, extra_taus);
+    return events;
+}
+
+/// Per-step operator and discount factors, identical for every barrier solve.
+struct StepCoefficients {
+    double d_tau = 0.0;
+    /// Operator coefficients scaled by -d_tau.
+    OperatorCoeffs scaled;
+    /// Discount factors from the end of this step to maturity.
+    double df_fwd = 1.0;
+    double dq_fwd = 1.0;
+    /// Explicit-Hull discounting term (0 for the other schemes).
+    double r_dt = 0.0;
+};
+
+/// Builds `StepCoefficients` for one solve. Non-owning, like the solve's
+/// other locals: the curves, volatility and maturity come from the valuation
+/// state that owns them (it outlives every solve), and `S` must outlive the
+/// operator (it is the solve's own grid).
+class StepOperator {
+public:
+    StepOperator(const ArrayXd& S,
+                 double dx,
+                 const detail::ValuationState& state,
+                 const PdeParams& params)
+        : spots_(&S),
+          dx_(dx),
+          spot_steps_(params.spot_steps),
+          volatility_(state.underlying.volatility()),
+          ttm_(state.maturity_year_fraction()),
+          space_grid_(params.space_grid),
+          curve_(&state.discount_curve()),
+          q_curve_(detail::curve_or_null(state.underlying.dividend_curve())),
+          df_full_(curve_->df(ttm_)),
+          dq_full_(q_curve_ != nullptr ? q_curve_->df(ttm_) : 1.0) {}
+
+    [[nodiscard]] StepCoefficients operator()(const pde::TimeStep& step) const {
+        const double d_tau = step.tau_end - step.tau_start;
+        const double t_prev = ttm_ - step.tau_start;
+        const double t_curr = ttm_ - step.tau_end;
+        const double r = curve_->forward_rate(t_curr, t_prev);
+        const double q = q_curve_ != nullptr ? q_curve_->forward_rate(t_curr, t_prev) : 0.0;
+        const bool implicit_discounting = step.method == PdeMethod::ExplicitHull;
+        const OperatorCoeffs coeffs =
+            space_grid_ == PdeSpaceGrid::Spot
+                ? spot_operator_coeffs(spots_->segment(1, spot_steps_ - 1),
+                                       dx_,
+                                       r,
+                                       q,
+                                       volatility_,
+                                       implicit_discounting)
+                : log_operator_coeffs(
+                      dx_, r, q, volatility_, implicit_discounting, spot_steps_ - 1);
+        return {.d_tau = d_tau,
+                .scaled = {.gamma = -d_tau * coeffs.gamma,
+                           .beta = -d_tau * coeffs.beta,
+                           .alpha = -d_tau * coeffs.alpha},
+                .df_fwd = df_full_ / curve_->df(t_curr),
+                .dq_fwd = q_curve_ != nullptr ? dq_full_ / q_curve_->df(t_curr) : 1.0,
+                .r_dt = implicit_discounting ? r * d_tau : 0.0};
+    }
+
+private:
+    const ArrayXd* spots_;
+    double dx_;
+    int spot_steps_;
+    double volatility_;
+    double ttm_;
+    PdeSpaceGrid space_grid_;
+    const DiscountCurve* curve_;
+    const DiscountCurve* q_curve_;
+    double df_full_;
+    double dq_full_;
+};
+
+/// One time step of the full-grid PDE, explicit or implicit/CN (PSOR when
+/// `intrinsic` is set). PSOR iterations are recorded when `psor_stats` is set.
+void advance(const ArrayXd& v_prev,
+             ArrayXd& v,
+             const StepCoefficients& c,
+             double left,
+             double right,
+             PdeMethod method,
+             const ArrayXd* intrinsic,
+             const PdeParams& params,
+             pde::PsorStats* psor_stats) {
+    if (is_explicit(method)) {
+        v = explicit_step(v_prev, c.scaled, left, right, intrinsic, c.r_dt);
+        return;
+    }
+    const auto result = implicit_cn_step(v_prev,
+                                         v,
+                                         c.scaled,
+                                         left,
+                                         right,
+                                         method,
+                                         intrinsic,
+                                         params.american_solver,
+                                         params.omega,
+                                         params.tol,
+                                         params.max_iter);
+    if (psor_stats != nullptr) {
+        psor_stats->record(result);
+    }
+}
+
+/// The solved surface read at the spot, less a dividend going ex on the
+/// pricing date.
+double price_at_spot(double spot,
+                     std::optional<double> pricing_dividend,
+                     const ArrayXd& S,
+                     const ArrayXd& values) {
+    return interp_linear(spot - pricing_dividend.value_or(0.0), S, values);
+}
+
+/// Space grid for a knock-out. Continuous: truncated at the barrier, which
+/// becomes a boundary node. Discrete: the full far-field grid with the
+/// barrier anchored half a cell between nodes.
+SpaceGridBuild build_knock_out_grid(const detail::ValuationState& state,
+                                    const PdeParams& params,
+                                    const BarrierSpec& spec,
+                                    const pde::Domain& domain) {
+    const double spot = state.underlying.initial_value();
+    const double strike = spec.strike();
+    const double barrier = spec.barrier();
+    const bool is_up = spec.direction() == BarrierDirection::Up;
+    const bool continuous = spec.monitoring() == BarrierMonitoring::Continuous;
+    const double volatility = state.underlying.volatility();
+    const double ttm = state.maturity_year_fraction();
+    // Far-field targets from pde::barrier_domain. Its Spot-grid lower edge is
+    // 0 (the fixed-span floor of the discrete/KI full grids); a continuously
+    // monitored up-barrier Spot grid keeps its floor max(S, K) / smax_mult.
+    const auto [far_lo, far_hi] = domain;
+    const double smax_mult = pde::resolved_smax_mult(params);
+    const double up_floor =
+        far_lo > 0.0 ? far_lo : std::max(std::max(spot, strike) / smax_mult, 1.0e-8);
+    const double smin_target = is_up ? up_floor : barrier;
+    const double smax_target = is_up ? barrier : far_hi;
+    if (params.space_grid == PdeSpaceGrid::LogSpot) {
+        if (continuous) {
+            return build_ko_continuous_log_grid(smin_target,
+                                                smax_target,
+                                                spec.direction(),
+                                                volatility,
+                                                ttm,
+                                                params.spot_steps,
+                                                params.time_steps,
+                                                params.method);
+        }
+        return build_log_grid(spot,
+                              strike,
+                              ttm,
+                              volatility,
+                              smax_mult,
+                              params.spot_steps,
+                              params.time_steps,
+                              params.method,
+                              barrier,
+                              /*anchor_half_step=*/true,
+                              domain);
+    }
+    if (continuous) {
+        return build_spot_grid(smin_target, smax_target, params.spot_steps);
+    }
+    return build_spot_grid(0.0, far_hi, params.spot_steps, barrier, /*anchor_half_step=*/true);
+}
+
+/// Boundary values for a continuous knock-out, whose grid ends at the
+/// barrier: that side carries the rebate value, the far side the usual
+/// vanilla asymptote.
+std::pair<double, double> continuous_knock_out_boundaries(
+    const BarrierSpec& spec, bool early, double smin, double smax, double df_fwd, double dq_fwd) {
+    const double strike = spec.strike();
+    const bool is_call = spec.option_type() == OptionType::Call;
+    const double barrier_value = knock_out_rebate_value(spec, df_fwd);
+    if (spec.direction() == BarrierDirection::Down) {
+        if (!is_call) {
+            return {barrier_value, 0.0};
+        }
+        const double continuation = smax * dq_fwd - strike * df_fwd;
+        const double intrinsic = std::max(smax - strike, 0.0);
+        return {barrier_value,
+                early ? std::max(continuation, intrinsic) : std::max(continuation, 0.0)};
+    }
+    if (is_call) {
+        return {0.0, barrier_value};
+    }
+    const double intrinsic = std::max(strike - smin, 0.0);
+    const double continuation = strike * df_fwd - smin * dq_fwd;
+    return {early ? std::max(continuation, intrinsic) : continuation, barrier_value};
 }
 
 }  // namespace
@@ -304,17 +586,14 @@ PdeBarrierEngine::european_ki_components() const {
 }
 
 double PdeBarrierEngine::barrier_last_dtau() const {
-    const double ttm = state_.maturity_year_fraction();
-    std::vector<double> extra_taus;
-    for (const auto& [tau, amount] : dividend_tau_schedule(state_)) {
-        if (tau > 1.0e-12 && tau < ttm - 1.0e-12) {
-            extra_taus.push_back(tau);
-        }
-    }
-    for (const double tau : barrier_monitoring_taus()) {
-        extra_taus.push_back(tau);
-    }
-    const ArrayXd tau_grid = build_tau_grid(ttm, pde_params(state_).time_steps, extra_taus);
+    // The solve's own time grid: continuous monitoring has no monitoring
+    // taus, so `continuous = false` is the same grid for both monitoring styles.
+    const ArrayXd tau_grid = event_schedule(state_,
+                                            barrier_monitoring_taus(),
+                                            /*continuous=*/false,
+                                            state_.maturity_year_fraction(),
+                                            pde_params(state_).time_steps)
+                                 .tau_grid;
     if (tau_grid.size() < 2) {
         return 0.0;
     }
@@ -360,12 +639,8 @@ PdeEngine::Solution PdeBarrierEngine::compute_barrier_knock_out() const {
     const auto& spec = std::get<BarrierSpec>(state_.spec);
     const bool early = state_.exercise_type() == ExerciseType::American;
     const double spot = state_.underlying.initial_value();
-    const double strike = spec.strike();
-    const double barrier = spec.barrier();
     const bool is_up = spec.direction() == BarrierDirection::Up;
-    const bool is_call = spec.option_type() == OptionType::Call;
     const bool continuous = spec.monitoring() == BarrierMonitoring::Continuous;
-    const double rebate = spec.rebate();
     const double volatility = state_.underlying.volatility();
     const double ttm = state_.maturity_year_fraction();
     const auto& curve = state_.discount_curve();
@@ -373,59 +648,11 @@ PdeEngine::Solution PdeBarrierEngine::compute_barrier_knock_out() const {
 
     validate_fd_inputs(state_, params, ttm, early, /*has_custom_payoff=*/false);
 
-    const std::vector<double> monitoring_taus = barrier_monitoring_taus();
-    const int m_steps = params.spot_steps;
-    const double ref_price = std::max(spot, strike);
-
-    // For continuous KO the grid is truncated at the barrier (the barrier
-    // becomes a boundary node); discrete KO uses the full grid with the
-    // barrier anchored half a cell between nodes.
-    // Far-field targets from pde::barrier_domain. Its Spot-grid lower edge is
-    // 0 (the fixed-span floor of the discrete/KI full grids); a continuously
-    // monitored up-barrier Spot grid keeps its floor max(S, K) / smax_mult.
-    const pde::Domain domain = far_field_domain();
-    const auto [far_lo, far_hi] = domain;
-    const double smax_mult = pde::resolved_smax_mult(params);
-    const double up_floor = far_lo > 0.0 ? far_lo : std::max(ref_price / smax_mult, 1.0e-8);
-    SpaceGridBuild built;
-    if (params.space_grid == PdeSpaceGrid::LogSpot) {
-        if (continuous) {
-            const double smin_target = is_up ? up_floor : barrier;
-            const double smax_target = is_up ? barrier : far_hi;
-            built = build_ko_continuous_log_grid(smin_target,
-                                                 smax_target,
-                                                 spec.direction(),
-                                                 volatility,
-                                                 ttm,
-                                                 m_steps,
-                                                 params.time_steps,
-                                                 params.method);
-        } else {
-            built = build_log_grid(spot,
-                                   strike,
-                                   ttm,
-                                   volatility,
-                                   smax_mult,
-                                   m_steps,
-                                   params.time_steps,
-                                   params.method,
-                                   barrier,
-                                   /*anchor_half_step=*/true,
-                                   domain);
-        }
-    } else {
-        if (continuous) {
-            const double smin_target = is_up ? up_floor : barrier;
-            const double smax_target = is_up ? barrier : far_hi;
-            built = build_spot_grid(smin_target, smax_target, m_steps);
-        } else {
-            built = build_spot_grid(0.0, far_hi, m_steps, barrier, /*anchor_half_step=*/true);
-        }
-    }
-    const ArrayXd grid = std::move(built.grid);
-    const ArrayXd S = std::move(built.spots);
-    const double dx = built.dx;
-    pde::warn_if_under_resolved(spot, dx, ttm, volatility, params.space_grid);
+    // ── Grid ────────────────────────────────────────────────────────
+    const SpaceGridBuild built = build_knock_out_grid(state_, params, spec, far_field_domain());
+    const ArrayXd& grid = built.grid;
+    const ArrayXd& S = built.spots;
+    pde::warn_if_under_resolved(spot, built.dx, ttm, volatility, params.space_grid);
     // Far-field sides only: a continuously monitored barrier is an exact boundary.
     pde::warn_if_domain_truncated(
         continuous && !is_up ? std::nullopt : std::optional<double>(S[0]),
@@ -436,165 +663,65 @@ PdeEngine::Solution PdeBarrierEngine::compute_barrier_knock_out() const {
         volatility);
     const double smin = S[0];
     const double smax = S[S.size() - 1];
+    const Mask knocked = knocked_nodes(S, spec.barrier(), is_up);
 
-    const auto hit = [&](Index i) { return is_up ? S[i] >= barrier : S[i] <= barrier; };
-
-    ArrayXd payoff(S.size());
-    if (is_call) {
-        payoff = (S - strike).cwiseMax(0.0);
-    } else {
-        payoff = (strike - S).cwiseMax(0.0);
-    }
+    // ── Terminal slice and event schedule ───────────────────────────
     // American intrinsic stays the vanilla payoff at any in-life moment,
     // regardless of the KO-zone reset applied to the terminal slice below.
-    const ArrayXd intrinsic_values = payoff;
+    const ArrayXd intrinsic_values =
+        vanilla_payoff(S, spec.strike(), spec.option_type() == OptionType::Call);
     const ArrayXd* intrinsic = early ? &intrinsic_values : nullptr;
+    const EventSchedule events =
+        event_schedule(state_, barrier_monitoring_taus(), continuous, ttm, params.time_steps);
 
-    std::set<double> monitoring_tau_set;
-    for (const double tau : monitoring_taus) {
-        monitoring_tau_set.insert(round12(tau));
-    }
+    ArrayXd payoff = intrinsic_values;
     // A maturity observation knocks out the KO-zone nodes *at* maturity:
     // they receive the rebate (at-hit and at-expiry coincide at T).
-    if (!continuous && monitoring_tau_set.contains(0.0)) {
-        for (Index i = 0; i < S.size(); ++i) {
-            if (hit(i)) {
-                payoff[i] = rebate;
-            }
-        }
+    if (!continuous && events.is_monitoring(0.0)) {
+        payoff = knocked.select(spec.rebate(), payoff);
     }
     ArrayXd v = payoff;
-
-    std::map<double, double> dividend_map;
-    for (const auto& [tau, amount] : dividend_tau_schedule(state_)) {
-        dividend_map.emplace(tau, amount);
-    }
-    if (const auto it = dividend_map.find(0.0); it != dividend_map.end()) {
-        apply_dividend_jump(v, grid, it->second, params.space_grid);
+    if (events.maturity_dividend.has_value()) {
+        apply_dividend_jump(v, grid, *events.maturity_dividend, params.space_grid);
         if (early) {
             v = v.max(payoff);
         }
-        dividend_map.erase(it);
-    }
-    std::optional<double> pricing_div;
-    if (const auto it = dividend_map.find(round12(ttm)); it != dividend_map.end()) {
-        pricing_div = it->second;
-        dividend_map.erase(it);
     }
 
-    std::vector<double> extra_taus;
-    extra_taus.reserve(dividend_map.size());
-    for (const auto& [tau, amount] : dividend_map) {
-        extra_taus.push_back(tau);
-    }
-    if (!continuous) {
-        extra_taus.insert(extra_taus.end(), monitoring_taus.begin(), monitoring_taus.end());
-    }
-    const ArrayXd tau_grid = build_tau_grid(ttm, params.time_steps, extra_taus);
-
-    if ((params.method == PdeMethod::Explicit || params.method == PdeMethod::ExplicitHull) &&
-        params.space_grid == PdeSpaceGrid::Spot) {
-        check_explicit_spot_stability(tau_grid,
+    if (is_explicit(params.method) && params.space_grid == PdeSpaceGrid::Spot) {
+        check_explicit_spot_stability(events.tau_grid,
                                       volatility,
                                       smax,
-                                      dx,
+                                      built.dx,
                                       ttm,
                                       curve,
                                       q_curve,
                                       params.method == PdeMethod::ExplicitHull);
     }
 
-    const double df_full = curve.df(ttm);
-    const double dq_full = q_curve.has_value() ? q_curve->df(ttm) : 1.0;
-    const auto steps = build_time_step_schedule(tau_grid, params.method, params.rannacher_steps);
-
+    // ── Time loop ───────────────────────────────────────────────────
+    const StepOperator step_operator(S, built.dx, state_, params);
     ArrayXd v_prev = v;
     double last_dtau = 0.0;
     pde::PsorStats psor_stats;
 
-    for (const auto& step : steps) {
-        const double d_tau = step.tau_end - step.tau_start;
-        const double t_prev = ttm - step.tau_start;
-        const double t_curr = ttm - step.tau_end;
-
-        const double r = curve.forward_rate(t_curr, t_prev);
-        const double q = q_curve.has_value() ? q_curve->forward_rate(t_curr, t_prev) : 0.0;
-        const bool implicit_discounting = step.method == PdeMethod::ExplicitHull;
-
-        const OperatorCoeffs coeffs =
-            params.space_grid == PdeSpaceGrid::Spot
-                ? spot_operator_coeffs(
-                      S.segment(1, m_steps - 1), dx, r, q, volatility, implicit_discounting)
-                : log_operator_coeffs(dx, r, q, volatility, implicit_discounting, m_steps - 1);
-
-        const double df_fwd = df_full / curve.df(t_curr);
-        const double dq_fwd = q_curve.has_value() ? dq_full / q_curve->df(t_curr) : 1.0;
-
-        double left = 0.0;
-        double right = 0.0;
-        if (continuous) {
-            // The barrier sits on a grid boundary carrying the rebate value.
-            double barrier_bv = 0.0;
-            if (rebate != 0.0) {
-                barrier_bv = spec.rebate_timing() == RebateTiming::AtHit ? rebate : rebate * df_fwd;
-            }
-            if (!is_up) {
-                left = barrier_bv;
-                if (!is_call) {
-                    right = 0.0;
-                } else {
-                    const double continuation = smax * dq_fwd - strike * df_fwd;
-                    const double intrinsic_bv = std::max(smax - strike, 0.0);
-                    right =
-                        early ? std::max(continuation, intrinsic_bv) : std::max(continuation, 0.0);
-                }
-            } else {
-                right = barrier_bv;
-                if (!is_call) {
-                    const double intrinsic_bv = std::max(strike - smin, 0.0);
-                    const double continuation = strike * df_fwd - smin * dq_fwd;
-                    left = early ? std::max(continuation, intrinsic_bv) : continuation;
-                } else {
-                    left = 0.0;
-                }
-            }
-        } else {
-            std::tie(left, right) = boundary_values(state_.option_type,
-                                                    strike,
-                                                    smin,
-                                                    smax,
-                                                    df_fwd,
-                                                    dq_fwd,
-                                                    early,
-                                                    nullptr,
-                                                    std::nullopt);
-        }
-
+    for (const auto& step :
+         build_time_step_schedule(events.tau_grid, params.method, params.rannacher_steps)) {
+        const StepCoefficients c = step_operator(step);
+        const auto [left, right] = continuous ? continuous_knock_out_boundaries(
+                                                    spec, early, smin, smax, c.df_fwd, c.dq_fwd)
+                                              : boundary_values(state_.option_type,
+                                                                spec.strike(),
+                                                                smin,
+                                                                smax,
+                                                                c.df_fwd,
+                                                                c.dq_fwd,
+                                                                early,
+                                                                nullptr,
+                                                                std::nullopt);
         v_prev = v;
-        last_dtau = d_tau;
-
-        const OperatorCoeffs scaled{
-            .gamma = -d_tau * coeffs.gamma,
-            .beta = -d_tau * coeffs.beta,
-            .alpha = -d_tau * coeffs.alpha,
-        };
-
-        if (step.method == PdeMethod::Explicit || step.method == PdeMethod::ExplicitHull) {
-            v = explicit_step(
-                v_prev, scaled, left, right, intrinsic, implicit_discounting ? r * d_tau : 0.0);
-        } else {
-            psor_stats.record(implicit_cn_step(v_prev,
-                                               v,
-                                               scaled,
-                                               left,
-                                               right,
-                                               step.method,
-                                               intrinsic,
-                                               params.american_solver,
-                                               params.omega,
-                                               params.tol,
-                                               params.max_iter));
-        }
+        last_dtau = c.d_tau;
+        advance(v_prev, v, c, left, right, step.method, intrinsic, params, &psor_stats);
 
         // Discrete barrier reset at monitoring dates: knocked-out nodes take
         // the rebate value; early exercise is re-imposed on surviving nodes.
@@ -603,36 +730,21 @@ PdeEngine::Solution PdeBarrierEngine::compute_barrier_knock_out() const {
         // monitor), and the dividend jump below carries the knocked-out
         // state back to cum-dividend spots in (H, H + D]. Same order as the
         // knock-in solve.
-        if (!continuous && monitoring_tau_set.contains(round12(step.tau_end))) {
-            double reset_value = 0.0;
-            if (rebate != 0.0) {
-                reset_value =
-                    spec.rebate_timing() == RebateTiming::AtHit ? rebate : rebate * df_fwd;
-            }
-            for (Index i = 0; i < S.size(); ++i) {
-                if (hit(i)) {
-                    v[i] = reset_value;
-                } else if (early && intrinsic_values[i] > v[i]) {
-                    v[i] = intrinsic_values[i];
-                }
-            }
+        if (!continuous && events.is_monitoring(step.tau_end)) {
+            const double reset_value = knock_out_rebate_value(spec, c.df_fwd);
+            v = knocked.select(reset_value, early ? v.max(intrinsic_values) : v);
         }
 
-        if (!dividend_map.empty()) {
-            if (const auto it = dividend_map.find(round12(step.tau_end));
-                it != dividend_map.end()) {
-                apply_dividend_jump(v, grid, it->second, params.space_grid);
-                if (early) {
-                    v = v.max(intrinsic_values);
-                }
+        if (const auto dividend = events.dividend_at(step.tau_end)) {
+            apply_dividend_jump(v, grid, *dividend, params.space_grid);
+            if (early) {
+                v = v.max(intrinsic_values);
             }
         }
     }
 
     psor_stats.report("PDE barrier", params.max_iter, params.tol);
-
-    const double interp_spot = spot - pricing_div.value_or(0.0);
-    const double price = interp_linear(interp_spot, S, v);
+    const double price = price_at_spot(spot, events.pricing_dividend, S, v);
     return Solution{
         .price = price,
         .spots = S,
@@ -643,104 +755,66 @@ PdeEngine::Solution PdeBarrierEngine::compute_barrier_knock_out() const {
 }
 
 PdeEngine::Solution PdeBarrierEngine::compute_barrier_knock_in() const {
-    const pde::Domain domain = far_field_domain();
     const PdeParams& params = pde_params(state_);
     const auto& spec = std::get<BarrierSpec>(state_.spec);
     const bool early = state_.exercise_type() == ExerciseType::American;
     const double spot = state_.underlying.initial_value();
-    const double strike = spec.strike();
     const double barrier = spec.barrier();
     const bool is_up = spec.direction() == BarrierDirection::Up;
-    const bool is_call = spec.option_type() == OptionType::Call;
     const bool continuous = spec.monitoring() == BarrierMonitoring::Continuous;
     // KI rebates are AT_EXPIRY by contract: paid at maturity if never hit.
     const double rebate = spec.rebate();
     const double volatility = state_.underlying.volatility();
     const double ttm = state_.maturity_year_fraction();
-    const auto& curve = state_.discount_curve();
-    const auto& q_curve = state_.underlying.dividend_curve();
 
     validate_fd_inputs(state_, params, ttm, early, /*has_custom_payoff=*/false);
 
-    const std::vector<double> monitoring_taus = barrier_monitoring_taus();
-    const int m_steps = params.spot_steps;
-
+    // ── Grid ────────────────────────────────────────────────────────
     // Full (untruncated) grid, anchored on the barrier: on a node for
     // continuous coupling, half a cell off for discrete monitoring.
-    SpaceGridBuild built;
-    if (params.space_grid == PdeSpaceGrid::LogSpot) {
-        built = build_log_grid(spot,
-                               strike,
-                               ttm,
-                               volatility,
-                               pde::resolved_smax_mult(params),
-                               m_steps,
-                               params.time_steps,
-                               params.method,
-                               barrier,
-                               /*anchor_half_step=*/!continuous,
-                               domain);
-    } else {
-        built =
-            build_spot_grid(0.0, domain.second, m_steps, barrier, /*anchor_half_step=*/!continuous);
-    }
-    const ArrayXd grid = std::move(built.grid);
-    const ArrayXd S = std::move(built.spots);
-    const double dx = built.dx;
-    pde::warn_if_under_resolved(spot, dx, ttm, volatility, params.space_grid);
+    const pde::Domain domain = far_field_domain();
+    const SpaceGridBuild built =
+        params.space_grid == PdeSpaceGrid::LogSpot
+            ? build_log_grid(spot,
+                             spec.strike(),
+                             ttm,
+                             volatility,
+                             pde::resolved_smax_mult(params),
+                             params.spot_steps,
+                             params.time_steps,
+                             params.method,
+                             barrier,
+                             /*anchor_half_step=*/!continuous,
+                             domain)
+            : build_spot_grid(
+                  0.0, domain.second, params.spot_steps, barrier, /*anchor_half_step=*/!continuous);
+    const ArrayXd& grid = built.grid;
+    const ArrayXd& S = built.spots;
+    pde::warn_if_under_resolved(spot, built.dx, ttm, volatility, params.space_grid);
     pde::warn_if_domain_truncated(
         S[0], S[S.size() - 1], spot, pde::log_forward(state_), ttm, volatility);
     const double smin = S[0];
     const double smax = S[S.size() - 1];
+    const Mask knocked = knocked_nodes(S, barrier, is_up);
 
-    const auto hit = [&](Index i) { return is_up ? S[i] >= barrier : S[i] <= barrier; };
-
-    ArrayXd payoff(S.size());
-    if (is_call) {
-        payoff = (S - strike).cwiseMax(0.0);
-    } else {
-        payoff = (strike - S).cwiseMax(0.0);
-    }
+    // ── Terminal slices and event schedule ──────────────────────────
+    const ArrayXd payoff = vanilla_payoff(S, spec.strike(), spec.option_type() == OptionType::Call);
     const ArrayXd* intrinsic = early ? &payoff : nullptr;
+    const EventSchedule events =
+        event_schedule(state_, barrier_monitoring_taus(), continuous, ttm, params.time_steps);
 
     // Active surface: the barrier has been hit (vanilla behaviour).
     // Inactive surface: not yet hit; terminal value is the maturity rebate.
     ArrayXd v_act = payoff;
     ArrayXd v_inact = ArrayXd::Constant(S.size(), rebate);
-
-    std::map<double, double> dividend_map;
-    for (const auto& [tau, amount] : dividend_tau_schedule(state_)) {
-        dividend_map.emplace(tau, amount);
-    }
-    if (const auto it = dividend_map.find(0.0); it != dividend_map.end()) {
-        apply_dividend_jump(v_act, grid, it->second, params.space_grid);
+    if (events.maturity_dividend.has_value()) {
+        apply_dividend_jump(v_act, grid, *events.maturity_dividend, params.space_grid);
         if (early) {
             v_act = v_act.max(payoff);
         }
         // The inactive terminal surface is spot-independent, so the
         // maturity-date jump is a no-op for it.
-        dividend_map.erase(it);
     }
-    std::optional<double> pricing_div;
-    if (const auto it = dividend_map.find(round12(ttm)); it != dividend_map.end()) {
-        pricing_div = it->second;
-        dividend_map.erase(it);
-    }
-
-    std::set<double> monitoring_tau_set;
-    for (const double tau : monitoring_taus) {
-        monitoring_tau_set.insert(round12(tau));
-    }
-
-    std::vector<double> extra_taus;
-    extra_taus.reserve(dividend_map.size());
-    for (const auto& [tau, amount] : dividend_map) {
-        extra_taus.push_back(tau);
-    }
-    if (!continuous) {
-        extra_taus.insert(extra_taus.end(), monitoring_taus.begin(), monitoring_taus.end());
-    }
-    const ArrayXd tau_grid = build_tau_grid(ttm, params.time_steps, extra_taus);
 
     // Nearest node to the barrier level, for the sub-grid coupling.
     Index j_barrier = 0;
@@ -748,19 +822,15 @@ PdeEngine::Solution PdeBarrierEngine::compute_barrier_knock_in() const {
 
     // Terminal coupling: a barrier already triggered at maturity moves the
     // inactive state onto the active payoff.
-    if (continuous || monitoring_tau_set.contains(0.0)) {
-        for (Index i = 0; i < S.size(); ++i) {
-            if (hit(i)) {
-                v_inact[i] = v_act[i];
-            }
-        }
+    if (continuous || events.is_monitoring(0.0)) {
+        v_inact = knocked.select(v_act, v_inact);
     }
 
     // Continuous monitoring solves the inactive surface only on the far side
     // of the barrier, with the active value at the barrier node as the inner
     // Dirichlet boundary (implicit coupling — no operator-splitting error).
     Index j_lo = 1;
-    Index j_hi = m_steps - 1;
+    Index j_hi = params.spot_steps - 1;
     if (continuous) {
         if (!is_up) {
             j_lo = j_barrier + 1;
@@ -769,66 +839,34 @@ PdeEngine::Solution PdeBarrierEngine::compute_barrier_knock_in() const {
         }
     }
 
-    const double df_full = curve.df(ttm);
-    const double dq_full = q_curve.has_value() ? q_curve->df(ttm) : 1.0;
-    const auto steps = build_time_step_schedule(tau_grid, params.method, params.rannacher_steps);
-
+    // ── Time loop ───────────────────────────────────────────────────
+    const StepOperator step_operator(S, built.dx, state_, params);
     ArrayXd v_act_prev = v_act;
     ArrayXd v_inact_prev = v_inact;
     double last_dtau = 0.0;
     pde::PsorStats psor_stats;
 
-    for (const auto& step : steps) {
-        const double d_tau = step.tau_end - step.tau_start;
-        const double t_prev = ttm - step.tau_start;
-        const double t_curr = ttm - step.tau_end;
-
-        const double r = curve.forward_rate(t_curr, t_prev);
-        const double q = q_curve.has_value() ? q_curve->forward_rate(t_curr, t_prev) : 0.0;
-        const bool implicit_discounting = step.method == PdeMethod::ExplicitHull;
-
-        const OperatorCoeffs coeffs =
-            params.space_grid == PdeSpaceGrid::Spot
-                ? spot_operator_coeffs(
-                      S.segment(1, m_steps - 1), dx, r, q, volatility, implicit_discounting)
-                : log_operator_coeffs(dx, r, q, volatility, implicit_discounting, m_steps - 1);
-
-        const double df_fwd = df_full / curve.df(t_curr);
-        const double dq_fwd = q_curve.has_value() ? dq_full / q_curve->df(t_curr) : 1.0;
-
-        const auto [left, right] = boundary_values(
-            state_.option_type, strike, smin, smax, df_fwd, dq_fwd, early, nullptr, std::nullopt);
-
+    for (const auto& step :
+         build_time_step_schedule(events.tau_grid, params.method, params.rannacher_steps)) {
+        const StepCoefficients c = step_operator(step);
+        const auto [left, right] = boundary_values(state_.option_type,
+                                                   spec.strike(),
+                                                   smin,
+                                                   smax,
+                                                   c.df_fwd,
+                                                   c.dq_fwd,
+                                                   early,
+                                                   nullptr,
+                                                   std::nullopt);
         v_act_prev = v_act;
         v_inact_prev = v_inact;
-        last_dtau = d_tau;
-
-        const OperatorCoeffs scaled{
-            .gamma = -d_tau * coeffs.gamma,
-            .beta = -d_tau * coeffs.beta,
-            .alpha = -d_tau * coeffs.alpha,
-        };
-        const double r_dt = implicit_discounting ? r * d_tau : 0.0;
+        last_dtau = c.d_tau;
 
         // Step A: active surface (vanilla, with early exercise).
-        if (step.method == PdeMethod::Explicit || step.method == PdeMethod::ExplicitHull) {
-            v_act = explicit_step(v_act_prev, scaled, left, right, intrinsic, r_dt);
-        } else {
-            psor_stats.record(implicit_cn_step(v_act_prev,
-                                               v_act,
-                                               scaled,
-                                               left,
-                                               right,
-                                               step.method,
-                                               intrinsic,
-                                               params.american_solver,
-                                               params.omega,
-                                               params.tol,
-                                               params.max_iter));
-        }
+        advance(v_act_prev, v_act, c, left, right, step.method, intrinsic, params, &psor_stats);
 
         // Step B: inactive surface (pure continuation, no exercise).
-        const double rebate_bv = rebate * df_fwd;
+        const double rebate_bv = rebate * c.df_fwd;
         if (continuous) {
             const double left_inact = !is_up ? v_act[j_barrier] : rebate_bv;
             const double right_inact = !is_up ? rebate_bv : v_act[j_barrier];
@@ -837,27 +875,23 @@ PdeEngine::Solution PdeBarrierEngine::compute_barrier_knock_in() const {
                                            v_inact_prev,
                                            j_lo,
                                            j_hi,
-                                           scaled,
+                                           c.scaled,
                                            left_inact,
                                            right_inact,
                                            step.method,
-                                           r_dt);
+                                           c.r_dt);
             }
             // Complete the slice: impose the hit-side coupling region and
             // the far-field boundary.
-            if (!is_up) {
-                v_inact.head(j_barrier + 1) = v_act.head(j_barrier + 1);
-                v_inact[v_inact.size() - 1] = rebate_bv;
-            } else {
-                v_inact.tail(S.size() - j_barrier) = v_act.tail(S.size() - j_barrier);
-                v_inact[0] = rebate_bv;
-            }
+            couple_hit_side(v_inact, v_act, j_barrier, is_up);
+            v_inact[!is_up ? v_inact.size() - 1 : 0] = rebate_bv;
         } else {
             // Discrete monitoring: full-grid solve with a one-step
             // look-ahead boundary proxy on the risky side (activation can
             // only occur at the next observation), coupling applied at
-            // monitoring dates.
-            const bool is_monitoring_step = monitoring_tau_set.contains(round12(step.tau_end));
+            // monitoring dates on the ex-dividend surface (the dividend jump
+            // below carries it back to cum-dividend spots).
+            const bool is_monitoring_step = events.is_monitoring(step.tau_end);
             double left_inact = rebate_bv;
             double right_inact = rebate_bv;
             if (!is_up) {
@@ -866,56 +900,36 @@ PdeEngine::Solution PdeBarrierEngine::compute_barrier_knock_in() const {
                 right_inact = is_monitoring_step ? v_act[v_act.size() - 1]
                                                  : v_act_prev[v_act_prev.size() - 1];
             }
-            if (step.method == PdeMethod::Explicit || step.method == PdeMethod::ExplicitHull) {
-                v_inact =
-                    explicit_step(v_inact_prev, scaled, left_inact, right_inact, nullptr, r_dt);
-            } else {
-                implicit_cn_step(v_inact_prev,
-                                 v_inact,
-                                 scaled,
-                                 left_inact,
-                                 right_inact,
-                                 step.method,
-                                 nullptr,
-                                 params.american_solver,
-                                 params.omega,
-                                 params.tol,
-                                 params.max_iter);
-            }
+            advance(v_inact_prev,
+                    v_inact,
+                    c,
+                    left_inact,
+                    right_inact,
+                    step.method,
+                    nullptr,
+                    params,
+                    nullptr);
             if (is_monitoring_step) {
-                for (Index i = 0; i < S.size(); ++i) {
-                    if (hit(i)) {
-                        v_inact[i] = v_act[i];
-                    }
-                }
+                v_inact = knocked.select(v_act, v_inact);
             }
         }
 
         // Discrete dividend jumps on both surfaces.
-        if (!dividend_map.empty()) {
-            if (const auto it = dividend_map.find(round12(step.tau_end));
-                it != dividend_map.end()) {
-                apply_dividend_jump(v_act, grid, it->second, params.space_grid);
-                if (early) {
-                    v_act = v_act.max(payoff);
-                }
-                apply_dividend_jump(v_inact, grid, it->second, params.space_grid);
-                if (continuous) {
-                    if (!is_up) {
-                        v_inact.head(j_barrier + 1) = v_act.head(j_barrier + 1);
-                    } else {
-                        v_inact.tail(S.size() - j_barrier) = v_act.tail(S.size() - j_barrier);
-                    }
-                }
+        if (const auto dividend = events.dividend_at(step.tau_end)) {
+            apply_dividend_jump(v_act, grid, *dividend, params.space_grid);
+            if (early) {
+                v_act = v_act.max(payoff);
+            }
+            apply_dividend_jump(v_inact, grid, *dividend, params.space_grid);
+            if (continuous) {
+                couple_hit_side(v_inact, v_act, j_barrier, is_up);
             }
         }
     }
 
     psor_stats.report("PDE barrier KI", params.max_iter, params.tol);
-
     // Price from the inactive surface: the option starts inactive.
-    const double interp_spot = spot - pricing_div.value_or(0.0);
-    const double price = interp_linear(interp_spot, S, v_inact);
+    const double price = price_at_spot(spot, events.pricing_dividend, S, v_inact);
     return Solution{
         .price = price,
         .spots = S,
