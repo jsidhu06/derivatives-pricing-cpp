@@ -596,18 +596,13 @@ PdeEngine::Solution PdeBarrierEngine::compute_barrier_knock_out() const {
                                                params.max_iter));
         }
 
-        if (!dividend_map.empty()) {
-            if (const auto it = dividend_map.find(round12(step.tau_end));
-                it != dividend_map.end()) {
-                apply_dividend_jump(v, grid, it->second, params.space_grid);
-                if (early) {
-                    v = v.max(intrinsic_values);
-                }
-            }
-        }
-
         // Discrete barrier reset at monitoring dates: knocked-out nodes take
         // the rebate value; early exercise is re-imposed on surviving nodes.
+        // Imposed on the ex-dividend surface: an observation on an ex-date
+        // sees the price after the dividend drop (ex-div first, then
+        // monitor), and the dividend jump below carries the knocked-out
+        // state back to cum-dividend spots in (H, H + D]. Same order as the
+        // knock-in solve.
         if (!continuous && monitoring_tau_set.contains(round12(step.tau_end))) {
             double reset_value = 0.0;
             if (rebate != 0.0) {
@@ -619,6 +614,16 @@ PdeEngine::Solution PdeBarrierEngine::compute_barrier_knock_out() const {
                     v[i] = reset_value;
                 } else if (early && intrinsic_values[i] > v[i]) {
                     v[i] = intrinsic_values[i];
+                }
+            }
+        }
+
+        if (!dividend_map.empty()) {
+            if (const auto it = dividend_map.find(round12(step.tau_end));
+                it != dividend_map.end()) {
+                apply_dividend_jump(v, grid, it->second, params.space_grid);
+                if (early) {
+                    v = v.max(intrinsic_values);
                 }
             }
         }

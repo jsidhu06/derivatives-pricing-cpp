@@ -19,7 +19,9 @@
 #include <cmath>
 #include <optional>
 #include <span>
+#include <tuple>
 #include <utility>
+#include <vector>
 
 using namespace dp;
 using dp::test::close_to;
@@ -83,6 +85,66 @@ TEST_CASE("PDE barriers agree with the analytical engine", "[barrier][pde]") {
     // Continuous barriers on a truncated grid: Python's paper-table PDE
     // tolerance (rtol 2e-4 .. 4e-3 depending on the case) motivates 5e-3.
     CHECK_THAT(pde_pv, close_to(analytic_pv, 5e-3, 1e-3));
+}
+
+TEST_CASE("a discrete fixing on an ex-dividend date sees the ex-dividend price",
+          "[barrier][pde][dividends]") {
+    // Convention: on a date that is both an ex-date and a monitoring date,
+    // the dividend goes ex first and the barrier observes the price after
+    // the drop. A knock-out fixed on the ex-dates must therefore match one
+    // fixed a minute later, not a minute earlier. Before the knock-out solve
+    // reset the barrier on the ex-dividend surface, it matched the earlier
+    // (cum-dividend) fixing and was off by 4-64% on these cases.
+    const auto scenario = GENERATE(std::tuple{OptionType::Put, BarrierDirection::Down, 90.0},
+                                   std::tuple{OptionType::Call, BarrierDirection::Down, 90.0},
+                                   std::tuple{OptionType::Put, BarrierDirection::Up, 105.0});
+    // Named copies: the lambda below captures them (clang-analyzer
+    // mis-tracks captured structured bindings).
+    const OptionType type = std::get<0>(scenario);
+    const BarrierDirection direction = std::get<1>(scenario);
+    const double barrier = std::get<2>(scenario);
+    CAPTURE(type, direction, barrier);
+    const auto maturity = make_datetime(2025, 12, 31);
+    const std::vector<DateTime> ex_dates{make_datetime(2025, 3, 28),
+                                         make_datetime(2025, 6, 28),
+                                         make_datetime(2025, 9, 28),
+                                         make_datetime(2025, 12, 28)};
+    DividendSchedule dividends;
+    dividends.reserve(ex_dates.size());
+    for (const DateTime date : ex_dates) {
+        dividends.push_back({date, 2.0});
+    }
+    const UnderlyingData underlying(
+        96.0, 0.25, {kPricingDate, DiscountCurve::flat(0.05), "USD"}, dividends);
+    const auto knock_out = [&](std::chrono::minutes shift) {
+        std::vector<DateTime> fixings;
+        fixings.reserve(ex_dates.size());
+        for (const DateTime date : ex_dates) {
+            fixings.push_back(date + shift);
+        }
+        return OptionValuation(
+                   underlying,
+                   BarrierSpec({.option_type = type,
+                                .exercise_type = ExerciseType::European,
+                                .strike = 100.0,
+                                .maturity = maturity,
+                                .barrier = barrier,
+                                .direction = direction,
+                                .action = BarrierAction::Out,
+                                .monitoring = BarrierMonitoring::Discrete,
+                                .currency = "USD",
+                                .monitoring_dates = fixings}),
+                   PricingMethod::PdeFd,
+                   PdeParams{
+                       .spot_steps = 600, .time_steps = 600, .space_grid = PdeSpaceGrid::LogSpot})
+            .present_value();
+    };
+    const double on_ex_date = knock_out(std::chrono::minutes{0});
+    const double after = knock_out(std::chrono::minutes{1});
+    const double before = knock_out(std::chrono::minutes{-1});
+    CAPTURE(on_ex_date, after, before);
+    CHECK_THAT(on_ex_date, close_to(after, 1e-4, 0.0));
+    CHECK(std::abs(on_ex_date - before) > 0.03 * std::abs(after));
 }
 
 TEST_CASE("European KI parity components are consistent", "[barrier][pde]") {
