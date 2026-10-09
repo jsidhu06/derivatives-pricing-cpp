@@ -5,7 +5,7 @@
 /// Enumerations shared across contract specifications, market data and engines.
 ///
 /// Each enum has a `to_string` overload returning a stable, human-readable
-/// identifier that matches the Python reference library's enum values.
+/// identifier, the same as the companion Python library's enum values.
 namespace dp {
 
 /// Call or put option type.
@@ -32,7 +32,7 @@ enum class GreekCalculationMethod {
 };
 
 /// Root-finding algorithm for the implied-volatility solver.
-enum class ImpliedVolMethod { NewtonRaphson, Bisection, Brent };
+enum class ImpliedVolMethod { NewtonRaphson, Bisection, Toms748 };
 
 /// Finite-difference time-stepping scheme for the PDE solver.
 enum class PdeMethod { Implicit, Explicit, ExplicitHull, CrankNicolson };
@@ -72,8 +72,8 @@ enum class RebateTiming { AtHit, AtExpiry };
 [[nodiscard]] std::string_view to_string(BarrierMonitoring value) noexcept;
 [[nodiscard]] std::string_view to_string(RebateTiming value) noexcept;
 
-/// Upper-case identifier (`ANALYTICAL`, `PDE_FD`, `MONTE_CARLO`, ...) matching the
-/// Python reference library's `Enum.name`. Used in diagnostics.
+/// Upper-case identifier (`ANALYTICAL`, `PDE_FD`, `MONTE_CARLO`, ...), the same
+/// as the companion Python library's `Enum.name`. Used in diagnostics.
 [[nodiscard]] std::string_view name(PricingMethod value) noexcept;
 [[nodiscard]] std::string_view name(ExerciseType value) noexcept;
 [[nodiscard]] std::string_view name(GreekCalculationMethod value) noexcept;

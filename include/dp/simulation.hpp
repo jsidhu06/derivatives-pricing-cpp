@@ -52,12 +52,12 @@ struct GbmParams {
 
 /// Parameters of the Merton (1976) jump-diffusion process: GBM diffusion plus
 /// compound-Poisson jumps with log-normal sizes Y ~ N(mu, delta^2) arriving at
-/// intensity `lambd` per year.
+/// rate lambda = `jump_intensity` per year.
 struct JdParams {
     double initial_value;
     double volatility;
     /// Jump intensity — expected number of jumps per year (>= 0).
-    double lambd;
+    double jump_intensity;
     /// Mean of the log-jump size distribution.
     double mu;
     /// Standard deviation of the log-jump size distribution (>= 0).
@@ -81,9 +81,8 @@ struct SrdParams {
 };
 
 /// Everything one simulation run produces. Returned by value: the process is
-/// immutable and holds no run state (a deliberate departure from the Python
-/// reference, which cached `time_grid` / `last_normals` on the instance and
-/// therefore needed defensive copies).
+/// immutable and holds no run state, so it can be shared and simulated from
+/// concurrently without defensive copies.
 struct SimulationResult {
     std::vector<DateTime> dates;  ///< Simulation grid (starts at the pricing date).
     Eigen::ArrayXd time_grid;     ///< Year fractions of `dates` from the pricing date.
@@ -344,7 +343,7 @@ public:
     [[nodiscard]] const JdParams& params() const noexcept { return params_; }
     [[nodiscard]] double initial_value() const noexcept { return params_.initial_value; }
     [[nodiscard]] double volatility() const noexcept { return params_.volatility; }
-    [[nodiscard]] double lambd() const noexcept { return params_.lambd; }
+    [[nodiscard]] double jump_intensity() const noexcept { return params_.jump_intensity; }
     [[nodiscard]] double mu() const noexcept { return params_.mu; }
     [[nodiscard]] double delta() const noexcept { return params_.delta; }
     [[nodiscard]] const DividendSchedule& discrete_dividends() const noexcept {

@@ -23,9 +23,9 @@ using Eigen::Index;
 
 inline constexpr double kDaysPerYear = 365.0;
 
-/// `smax_mult` used when `PdeParams::smax_mult` is unset: the legacy domain
-/// of custom payoffs and barriers (before widening), and the vanilla Spot
-/// grid cap.
+/// `smax_mult` used when `PdeParams::smax_mult` is unset: the fixed span of
+/// custom payoffs and barriers (before widening), and the vanilla Spot grid
+/// cap.
 inline constexpr double kDefaultSmaxMult = 4.0;
 
 [[nodiscard]] inline double resolved_smax_mult(const PdeParams& params) {
@@ -131,7 +131,7 @@ struct SpaceGridBuild {
                                            double log_fwd,
                                            PdeSpaceGrid space_grid);
 
-/// Barrier far-field targets: the legacy domain (`[0, smax_mult * max(S, K)]`
+/// Barrier far-field targets: the fixed span (`[0, smax_mult * max(S, K)]`
 /// Spot, `[max(S, K) / smax_mult, smax_mult * max(S, K)]` LogSpot, with
 /// `smax_mult` defaulting to 4). With
 /// `smax_mult` unset on the LogSpot grid, a side reaching fewer than 3

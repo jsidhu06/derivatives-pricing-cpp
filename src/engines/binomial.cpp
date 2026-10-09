@@ -25,8 +25,8 @@ namespace {
 
 constexpr double kDaysPerYear = 365.0;
 
-/// Same tolerance as `np.allclose` (used by the Python reference to verify
-/// the calendar grid produced uniform year-fraction steps).
+/// True when every step equals the first within numpy-`allclose` tolerances
+/// (rtol 1e-5, atol 1e-8): the calendar grid has uniform year-fraction steps.
 bool all_close_to_first(const Eigen::ArrayXd& values) {
     const double first = values[0];
     return ((values - first).abs() <= 1e-8 + 1e-5 * std::abs(first)).all();

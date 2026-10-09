@@ -306,9 +306,9 @@ double AnalyticalBarrierEngine::price_at_spot(const Inputs& in, double spot) con
     }
 
     // Reiner-Rubinstein divides by sigma*sqrt(T) and raises (H/S)^(2 lambda),
-    // so sigma -> 0 produces division by zero or overflow; the Python
-    // reference traps those and falls back to the deterministic-forward
-    // closed form, which we mirror via the pre-/post-checks below.
+    // so sigma -> 0 produces division by zero or overflow. The pre-/post-
+    // checks below trap those and fall back to the deterministic-forward
+    // closed form.
     const auto deterministic = [&] {
         return deterministic_limit_price(spot,
                                          in.strike,

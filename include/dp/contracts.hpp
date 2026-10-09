@@ -12,8 +12,8 @@
 /// Contract specifications accepted by `OptionValuation`.
 ///
 /// Each spec is constructed from an aggregate `Params` struct (so call sites
-/// can use designated initialisers, mirroring the Python keyword API) and is
-/// validated and normalised in its constructor. Specs are immutable.
+/// can use designated initialisers) and is validated and normalised in its
+/// constructor. Specs are immutable.
 namespace dp {
 
 // ── Vanilla ─────────────────────────────────────────────────────────

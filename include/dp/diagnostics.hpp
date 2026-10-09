@@ -5,8 +5,7 @@
 
 /// Library diagnostics: non-fatal warnings and log verbosity.
 ///
-/// The Python reference implementation used `warnings.warn` for recoverable
-/// conditions (extrapolating a curve, negative rates, ...). Here those are
+/// Recoverable conditions (extrapolating a curve, negative rates, ...) are
 /// routed through a process-wide warning handler so applications can forward
 /// them to their own logging / monitoring. The default handler writes to the
 /// library's spdlog logger at WARN level.

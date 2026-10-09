@@ -13,6 +13,8 @@ TEST_CASE("enum to_string matches the Python reference values", "[enums]") {
     CHECK(to_string(PricingMethod::MonteCarlo) == "monte_carlo");
     CHECK(to_string(GreekCalculationMethod::LikelihoodRatio) == "likelihood_ratio");
     CHECK(to_string(ImpliedVolMethod::NewtonRaphson) == "newton_raphson");
+    // C++ only: the Python library's bracketing method is scipy's brentq.
+    CHECK(to_string(ImpliedVolMethod::Toms748) == "toms748");
     CHECK(to_string(PdeMethod::CrankNicolson) == "crank_nicolson");
     CHECK(to_string(PdeSpaceGrid::LogSpot) == "log_spot");
     CHECK(to_string(PdeEarlyExercise::GaussSeidel) == "gauss_seidel");

@@ -207,10 +207,13 @@ TEST_CASE("LSM bias warning fires for up-and-out calls", "[barrier][mc]") {
 
 TEST_CASE("MC barrier process and greek policy", "[barrier][mc]") {
     SECTION("continuous monitoring requires GBM") {
-        const JdProcess jd(
-            md(),
-            {.initial_value = 100.0, .volatility = 0.25, .lambd = 0.3, .mu = -0.1, .delta = 0.1},
-            {.paths = 1000, .end_date = kMaturity, .num_steps = 12});
+        const JdProcess jd(md(),
+                           {.initial_value = 100.0,
+                            .volatility = 0.25,
+                            .jump_intensity = 0.3,
+                            .mu = -0.1,
+                            .delta = 0.1},
+                           {.paths = 1000, .end_date = kMaturity, .num_steps = 12});
         CHECK_THROWS_MATCHES(OptionValuation(jd,
                                              BarrierSpec(base_params(
                                                  115.0, BarrierDirection::Up, BarrierAction::Out)),
@@ -220,10 +223,13 @@ TEST_CASE("MC barrier process and greek policy", "[barrier][mc]") {
     }
 
     SECTION("discrete monitoring works for jump diffusion") {
-        const JdProcess jd(
-            md(),
-            {.initial_value = 100.0, .volatility = 0.25, .lambd = 0.3, .mu = -0.1, .delta = 0.1},
-            {.paths = 20'000, .end_date = kMaturity, .num_steps = 12});
+        const JdProcess jd(md(),
+                           {.initial_value = 100.0,
+                            .volatility = 0.25,
+                            .jump_intensity = 0.3,
+                            .mu = -0.1,
+                            .delta = 0.1},
+                           {.paths = 20'000, .end_date = kMaturity, .num_steps = 12});
         auto params = base_params(115.0, BarrierDirection::Up, BarrierAction::Out);
         params.monitoring = BarrierMonitoring::Discrete;
         params.num_observations = 12;

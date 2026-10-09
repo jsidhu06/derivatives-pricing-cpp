@@ -283,8 +283,8 @@ std::pair<double, double> boundary_values(std::optional<OptionType> option_type,
     // Forward-intrinsic asymptote max(+/-(S dq - K df), 0) at each boundary:
     // exact when the boundary is far (in sigma*sqrt(T) units) from the strike
     // on either side, so it also holds when the strike lies outside the
-    // domain (the auto vanilla domain need not contain it). On the legacy
-    // domains it reduces to the classic put 0 above / call 0 below.
+    // domain (the auto vanilla domain need not contain it). On the fixed
+    // spans it reduces to the classic put 0 above / call 0 below.
     const double k = *strike;
     const double sign = option_type == OptionType::Call ? 1.0 : -1.0;
     const auto boundary = [&](double s_b) {

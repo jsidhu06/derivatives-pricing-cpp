@@ -7,8 +7,8 @@
 namespace dp {
 
 void MonteCarloParams::validate() const {
-    if (deg < 1) {
-        throw ValidationError(std::format("deg must be >= 1, got {}", deg));
+    if (basis_degree < 1) {
+        throw ValidationError(std::format("basis_degree must be >= 1, got {}", basis_degree));
     }
     if (ridge_lambda < 0.0) {
         throw ValidationError(std::format("ridge_lambda must be >= 0, got {}", ridge_lambda));

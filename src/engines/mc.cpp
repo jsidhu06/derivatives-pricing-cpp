@@ -123,14 +123,14 @@ void warn_if_high_std_error(double std_error,
     }
 }
 
-/// Laguerre design matrix, shape (n, deg + 1); standard recurrence.
-MatrixXd laguerre_basis(const ArrayXd& x, int deg) {
-    MatrixXd basis(x.size(), deg + 1);
+/// Laguerre design matrix, shape (n, degree + 1); standard recurrence.
+MatrixXd laguerre_basis(const ArrayXd& x, int degree) {
+    MatrixXd basis(x.size(), degree + 1);
     basis.col(0).setOnes();
-    if (deg >= 1) {
+    if (degree >= 1) {
         basis.col(1) = (1.0 - x).matrix();
     }
-    for (int k = 1; k < deg; ++k) {
+    for (int k = 1; k < degree; ++k) {
         basis.col(k + 1) =
             (((2.0 * k + 1.0 - x) * basis.col(k).array() - k * basis.col(k - 1).array()) /
              (k + 1.0))
@@ -163,7 +163,7 @@ ArrayXd ridge_lsm_continuation(const ArrayXd& spots,
         }
     }
 
-    if (n_itm < std::max<Index>(params.min_itm, params.deg + 1)) {
+    if (n_itm < std::max<Index>(params.min_itm, params.basis_degree + 1)) {
         const double mean = y_itm.mean();
         for (Index i = 0; i < spots.size(); ++i) {
             if (itm[i]) {
@@ -174,7 +174,7 @@ ArrayXd ridge_lsm_continuation(const ArrayXd& spots,
     }
 
     const double normaliser = strike.has_value() ? *strike : std::max(spot_itm.mean(), 1e-12);
-    const MatrixXd X = laguerre_basis(spot_itm / normaliser, params.deg);
+    const MatrixXd X = laguerre_basis(spot_itm / normaliser, params.basis_degree);
     const MatrixXd xtx =
         X.transpose() * X + params.ridge_lambda * MatrixXd::Identity(X.cols(), X.cols());
     const VectorXd beta = xtx.ldlt().solve(X.transpose() * y_itm);
@@ -224,8 +224,8 @@ void record_hits(BoolArray& ever_hit,
 }
 
 /// PCG64 stream selector for the American-barrier Bernoulli bridge draws,
-/// independent of the diffusion stream sharing the same seed (mirrors
-/// numpy's `SeedSequence.spawn` in the Python reference).
+/// independent of the diffusion stream sharing the same seed (in the spirit
+/// of numpy's `SeedSequence.spawn`).
 constexpr std::uint64_t kBridgeStream = 0x42524447;  // "BRDG"
 
 /// Uniform in the open interval (0, 1) — see simulation.cpp.
@@ -278,14 +278,14 @@ ArrayXd barrier_log_distance(const ArrayXd& spots, double barrier, bool is_up) {
 /// with barrier-distance features, so the regression can represent the
 /// sharp continuation cliff near the absorbing boundary.
 MatrixXd barrier_lsm_design_matrix(
-    const ArrayXd& spots, double strike, double barrier, bool is_up, int deg) {
+    const ArrayXd& spots, double strike, double barrier, bool is_up, int degree) {
     const ArrayXd x = spots / strike;
-    const MatrixXd base = laguerre_basis(x, deg);
+    const MatrixXd base = laguerre_basis(x, degree);
     const ArrayXd dist = barrier_log_distance(spots, barrier, is_up);
     const ArrayXd inv_dist = dist.cwiseMax(5.0e-2).inverse();
     const ArrayXd near_barrier = (-4.0 * dist).exp();
 
-    const Index extra = deg >= 2 ? 6 : 5;
+    const Index extra = degree >= 2 ? 6 : 5;
     MatrixXd design(spots.size(), base.cols() + extra);
     design.leftCols(base.cols()) = base;
     Index c = base.cols();
@@ -294,7 +294,7 @@ MatrixXd barrier_lsm_design_matrix(
     design.col(c++) = inv_dist.matrix();
     design.col(c++) = near_barrier.matrix();
     design.col(c++) = (x * near_barrier).matrix();
-    if (deg >= 2) {
+    if (degree >= 2) {
         design.col(c) = (base.col(1).array() * near_barrier).matrix();
     }
     return design;
@@ -344,7 +344,8 @@ ArrayXd ridge_barrier_lsm_continuation(const ArrayXd& spots,
         }
     }
 
-    const MatrixXd design = barrier_lsm_design_matrix(spot_itm, strike, barrier, is_up, params.deg);
+    const MatrixXd design =
+        barrier_lsm_design_matrix(spot_itm, strike, barrier, is_up, params.basis_degree);
     const Index min_regression_paths = std::max<Index>(params.min_itm, design.cols() + 2);
     VectorXd fitted(n_itm);
     if (n_itm < min_regression_paths) {

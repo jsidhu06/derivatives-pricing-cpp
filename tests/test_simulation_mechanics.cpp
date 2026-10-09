@@ -195,11 +195,14 @@ TEST_CASE("GBM dispersion grows with volatility", "[simulation][gbm]") {
 }
 
 TEST_CASE("jump-diffusion behaviour", "[simulation][jd]") {
-    const auto jd = [](double lambd, double mu, double delta) {
-        return JdProcess(
-            md(),
-            {.initial_value = 100.0, .volatility = 0.2, .lambd = lambd, .mu = mu, .delta = delta},
-            config(20'000));
+    const auto jd = [](double jump_intensity, double mu, double delta) {
+        return JdProcess(md(),
+                         {.initial_value = 100.0,
+                          .volatility = 0.2,
+                          .jump_intensity = jump_intensity,
+                          .mu = mu,
+                          .delta = delta},
+                         config(20'000));
     };
 
     SECTION("zero-size jumps reproduce GBM even with a positive intensity") {

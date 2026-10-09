@@ -24,8 +24,8 @@ namespace {
 using Eigen::Index;
 
 /// PCG64 stream selector for the jump components of `JdProcess`, so the jump
-/// draws are independent of the diffusion draws made from the same seed
-/// (mirrors numpy's `SeedSequence.spawn` in the Python reference).
+/// draws are independent of the diffusion draws made from the same seed (in
+/// the spirit of numpy's `SeedSequence.spawn`).
 constexpr std::uint64_t kJumpStream = 0x4a554d50;  // "JUMP"
 
 /// Uniform in the open interval (0, 1): 53 random bits centred in the cell,
@@ -647,7 +647,7 @@ JdProcess::JdProcess(MarketData market_data,
       params_(std::move(params)) {
     detail::require_positive(params_.initial_value, "JdParams.initial_value");
     detail::require_non_negative(params_.volatility, "JdParams.volatility");
-    detail::require_non_negative(params_.lambd, "JdParams.lambd");
+    detail::require_non_negative(params_.jump_intensity, "JdParams.jump_intensity");
     detail::require_finite(params_.mu, "JdParams.mu");
     detail::require_non_negative(params_.delta, "JdParams.delta");
     params_.discrete_dividends = normalize_dividends(std::move(params_.discrete_dividends));
@@ -670,7 +670,7 @@ SimulationResult JdProcess::simulate(std::optional<std::uint64_t> seed) const {
     const Eigen::ArrayXd net_rates =
         net_forward_rates(discount_curve(), params_.dividend_curve, grid.time_grid);
     const double sigma = params_.volatility;
-    const double lambda = params_.lambd;
+    const double lambda = params_.jump_intensity;
     const double mu_jump = params_.mu;
     const double delta_jump = params_.delta;
     // Drift compensator kbar = E[e^Y - 1] keeps the process a martingale.
@@ -681,9 +681,8 @@ SimulationResult JdProcess::simulate(std::optional<std::uint64_t> seed) const {
 
     const std::map<Index, double> dividend_at =
         dividend_indices(grid.dates, params_.discrete_dividends, pricing_date());
-    // The input spot is cum-dividend: it goes ex immediately at t=0. (The
-    // Python reference skips this adjustment for JDProcess — an inconsistency
-    // with its GBMProcess; we apply it for both.)
+    // The input spot is cum-dividend: it goes ex immediately at t=0, for
+    // every process.
     apply_dividend(paths_matrix, dividend_at, 0);
 
     for (Index t = 0; t < steps; ++t) {

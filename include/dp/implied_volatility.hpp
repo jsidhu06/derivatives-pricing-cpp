@@ -11,13 +11,13 @@ namespace dp {
 
 /// Solver controls for `implied_volatility`.
 struct ImpliedVolParams {
-    /// Root finder. `Brent` runs Boost.Math's TOMS 748 (Alefeld-Potra-Shi),
-    /// a bracketing method in the Brent family with better worst-case
-    /// convergence.
+    /// Root finder. `Toms748` is Boost.Math's TOMS 748 (Alefeld, Potra &
+    /// Shi): a bracketing method that, like Brent's, mixes interpolation
+    /// steps with bisection safeguards, with better worst-case convergence.
     /// Unset: picked by engine. Safeguarded Newton-Raphson for `Analytical`
-    /// (closed-form vega is cheap); Brent for `Binomial` and `PdeFd` (no vega
-    /// needed, whereas a numerical vega costs two extra pricings per Newton
-    /// step, making Brent ~30% faster in wall time).
+    /// (closed-form vega is cheap); TOMS 748 for `Binomial` and `PdeFd` (no
+    /// vega needed, whereas a numerical vega costs two extra pricings per
+    /// Newton step).
     std::optional<ImpliedVolMethod> method = std::nullopt;
     /// Starting point for Newton-Raphson. When unset: the valuation's own
     /// volatility for `Analytical`, an extrinsic-value heuristic otherwise.
@@ -29,7 +29,7 @@ struct ImpliedVolParams {
     double vol_upper = 5.0;
     /// Absolute tolerance on the implied volatility (annualised vol units,
     /// e.g. 1e-8 = 1e-6 vol points), the same for every method: the result
-    /// is within `tol` of the root. Bisection and Brent stop once the bracket
+    /// is within `tol` of the root. Bisection and TOMS 748 stop once the bracket
     /// is within `tol`; a Newton result is accepted only if the price
     /// residual changes sign across `[vol - tol, vol + tol]`, otherwise it
     /// falls back to bisection. A price tolerance would not do: the vol error

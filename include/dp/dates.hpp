@@ -9,8 +9,8 @@
 /// Date-time types and day-count arithmetic.
 ///
 /// `DateTime` is a timezone-free (UTC-clock) time point with microsecond
-/// resolution — the same resolution as Python's naive `datetime`. The type
-/// itself guarantees "no timezone", so no runtime validation is needed.
+/// resolution. The type itself guarantees "no timezone", so no runtime
+/// validation is needed.
 namespace dp {
 
 /// Microsecond-resolution, timezone-free time point.

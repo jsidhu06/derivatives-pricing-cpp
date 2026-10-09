@@ -18,7 +18,7 @@ struct MonteCarloParams {
     /// share common random numbers. `nullopt` uses fresh entropy per call.
     std::optional<unsigned long long> random_seed = 42;
     /// Laguerre polynomial degree for Longstaff-Schwartz regression.
-    int deg = 3;
+    int basis_degree = 3;
     /// Ridge regularisation for the LSM regression.
     double ridge_lambda = 1e-8;
     /// Minimum in-the-money paths required to run the regression.
@@ -53,12 +53,13 @@ struct PdeParams {
     /// `sigma * sqrt(T)`: vanillas use the smallest log-interval containing
     /// the spot and forward with 6 standard deviations of ln(S_T) of margin
     /// (capped at `4 * max(spot, strike)` on the uniform Spot grid);
-    /// barriers use the legacy `4 * max(spot, strike)` span, widened on the
+    /// barriers use the fixed `4 * max(spot, strike)` span, widened on the
     /// LogSpot grid when it reaches fewer than 3 standard deviations; custom
-    /// payoffs use the legacy span. A value sets the legacy domain exactly:
-    /// `[0, m * max(S, K)]` (Spot) or `[max(S, K) / m, m * max(S, K)]`
-    /// (LogSpot), and must be > 1. A boundary within 3 standard deviations
-    /// of the spot/forward warns.
+    /// payoffs use the fixed span. A value sets the fixed span exactly:
+    /// `[0, smax_mult * max(S, K)]` (Spot) or
+    /// `[max(S, K) / smax_mult, smax_mult * max(S, K)]` (LogSpot), and must
+    /// be > 1. A boundary within 3 standard deviations of the spot/forward
+    /// warns.
     std::optional<double> smax_mult = std::nullopt;
     int spot_steps = 200;
     int time_steps = 200;
@@ -82,8 +83,7 @@ struct PdeParams {
     /// time-marching scheme chosen from the monitoring style (Crank-Nicolson
     /// for continuous, explicit-Hull for discrete).
     ///
-    /// To override individual presets, assign to the returned struct — the
-    /// C++ analogue of the Python `PDEParams.for_barriers(..., **overrides)`:
+    /// To override individual presets, assign to the returned struct:
     ///
     ///     auto params = PdeParams::for_barriers(BarrierMonitoring::Discrete);
     ///     params.time_steps = 5000;  // override; validated at use

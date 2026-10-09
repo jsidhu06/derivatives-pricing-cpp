@@ -561,11 +561,11 @@ TEST_CASE("MC prices a custom payoff like its replication", "[mc][payoff]") {
 // ---------------------------------------------------------------------------
 
 TEST_CASE("LSM is stable across basis degrees", "[mc][american]") {
-    const auto american_put = [](int deg) {
+    const auto american_put = [](int basis_degree) {
         return OptionValuation(gbm(20'000),
                                spec(OptionType::Put, ExerciseType::American),
                                PricingMethod::MonteCarlo,
-                               MonteCarloParams{.deg = deg})
+                               MonteCarloParams{.basis_degree = basis_degree})
             .present_value();
     };
     const double deg2 = american_put(2);
@@ -589,7 +589,7 @@ TEST_CASE("LSM exercises a deep in-the-money put immediately", "[mc][american]")
     const double pv = OptionValuation(process,
                                       spec(OptionType::Put, ExerciseType::American),
                                       PricingMethod::MonteCarlo,
-                                      MonteCarloParams{.deg = 2})
+                                      MonteCarloParams{.basis_degree = 2})
                           .present_value();
     CHECK_THAT(pv, close_to(60.0, 0.0, 0.01));
 }

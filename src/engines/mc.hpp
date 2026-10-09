@@ -19,9 +19,9 @@ using IndexArray = Eigen::Array<Eigen::Index, Eigen::Dynamic, 1>;
 /// Longstaff-Schwartz regression on a ridge-regularised Laguerre basis.
 /// Pathwise and likelihood-ratio Greeks for European vanillas.
 ///
-/// Known limitation (shared with the Python reference): for American custom
+/// Known limitation (shared with the companion Python library): for American custom
 /// payoffs with a cap or extra kinks (e.g. a bull spread) on fine exercise
-/// grids (~400+ dates), the degree-`deg` Laguerre basis in S / mean(S)
+/// grids (~400+ dates), the Laguerre basis (degree `basis_degree`) in S / mean(S)
 /// cannot represent the payoff's kinks, so it under-estimates continuation
 /// between the kinks and exercises early. On some seeds the losses compound
 /// over steps and the price collapses below the European value. Vanillas are

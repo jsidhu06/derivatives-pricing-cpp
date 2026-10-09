@@ -338,9 +338,9 @@ ImpliedVolResult solve_bisection(PriceResidual& residual,
     return bracketed_result(interval, iterations, VolTolerance{params.tol});
 }
 
-/// `ImpliedVolMethod::Brent` runs Boost's TOMS 748 (Alefeld, Potra & Shi), a
-/// bracketing method from Brent's family that typically needs fewer
-/// evaluations; the name matches the Python API (scipy's `brentq`).
+/// TOMS 748 (Alefeld, Potra & Shi): bracketing with inverse cubic
+/// interpolation and double-length secant steps; typically fewer evaluations
+/// than bisection or Brent's method.
 ImpliedVolResult solve_toms748(PriceResidual& residual,
                                const Bracket& bracket,
                                const ImpliedVolParams& params) {
@@ -451,7 +451,7 @@ ImpliedVolResult implied_volatility(double target_price,
 
     const ImpliedVolMethod solver = params.method.value_or(
         valuation.pricing_method() == PricingMethod::Analytical ? ImpliedVolMethod::NewtonRaphson
-                                                                : ImpliedVolMethod::Brent);
+                                                                : ImpliedVolMethod::Toms748);
     // Clipped to [low, high], which the bracket contains (it only widens).
     const double initial = initial_vol(params, valuation, underlying, target_price, low, high);
     PriceResidual residual(valuation, underlying, target_price);
@@ -474,7 +474,7 @@ ImpliedVolResult implied_volatility(double target_price,
             return finalise(solve_bisection(residual, bracket, params), residual, params, solver);
         case ImpliedVolMethod::Bisection:
             return finalise(solve_bisection(residual, bracket, params), residual, params, solver);
-        case ImpliedVolMethod::Brent:
+        case ImpliedVolMethod::Toms748:
             return finalise(solve_toms748(residual, bracket, params), residual, params, solver);
     }
     throw ConfigurationError("unknown ImpliedVolMethod");

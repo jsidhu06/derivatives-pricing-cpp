@@ -381,8 +381,8 @@ PdeEngine::Solution PdeBarrierEngine::compute_barrier_knock_out() const {
     // becomes a boundary node); discrete KO uses the full grid with the
     // barrier anchored half a cell between nodes.
     // Far-field targets from pde::barrier_domain. Its Spot-grid lower edge is
-    // 0 (the legacy floor of the discrete/KI full grids); a continuously
-    // monitored up-barrier Spot grid keeps its legacy floor max(S, K) / smax_mult.
+    // 0 (the fixed-span floor of the discrete/KI full grids); a continuously
+    // monitored up-barrier Spot grid keeps its floor max(S, K) / smax_mult.
     const pde::Domain domain = far_field_domain();
     const auto [far_lo, far_hi] = domain;
     const double smax_mult = pde::resolved_smax_mult(params);

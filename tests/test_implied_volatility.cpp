@@ -119,8 +119,11 @@ ImpliedVolMethod solver_of(const char* code) {
     if (std::strcmp(code, "BI") == 0) {
         return ImpliedVolMethod::Bisection;
     }
+    // The Python reference's bracketing solver is scipy's brentq; ours is
+    // TOMS 748. Both stop within tol of the root, which is all the golden
+    // rows compare.
     if (std::strcmp(code, "BR") == 0) {
-        return ImpliedVolMethod::Brent;
+        return ImpliedVolMethod::Toms748;
     }
     return ImpliedVolMethod::NewtonRaphson;
 }
@@ -153,7 +156,7 @@ TEST_CASE("implied vol matches the Python reference implementation", "[implied_v
 
 TEST_CASE("BSM implied vol recovers a 300% vol", "[implied_vol]") {
     const auto type = GENERATE(OptionType::Call, OptionType::Put);
-    const auto method = GENERATE(ImpliedVolMethod::NewtonRaphson, ImpliedVolMethod::Brent);
+    const auto method = GENERATE(ImpliedVolMethod::NewtonRaphson, ImpliedVolMethod::Toms748);
     const double target = bsm(type, 3.0).present_value();
 
     const auto result =
@@ -171,7 +174,7 @@ TEST_CASE("implied vol flags vols the price cannot determine", "[implied_vol]") 
     const auto type = GENERATE(OptionType::Call, OptionType::Put);
     const double true_vol = GENERATE(1.0e-3, 2.0e-3);
     const auto method = GENERATE(
-        ImpliedVolMethod::NewtonRaphson, ImpliedVolMethod::Bisection, ImpliedVolMethod::Brent);
+        ImpliedVolMethod::NewtonRaphson, ImpliedVolMethod::Bisection, ImpliedVolMethod::Toms748);
     const double target = bsm(type, true_vol).present_value();
 
     const dp::test::WarningCapture capture;
@@ -187,7 +190,7 @@ TEST_CASE("a tiny vol at the forward is well determined", "[implied_vol]") {
     // With the strike at the forward, vega stays ~0.4 S sqrt(T) even at 0.2%
     // vol, so the price pins the vol down and it must be recovered to tol.
     const auto method = GENERATE(
-        ImpliedVolMethod::NewtonRaphson, ImpliedVolMethod::Bisection, ImpliedVolMethod::Brent);
+        ImpliedVolMethod::NewtonRaphson, ImpliedVolMethod::Bisection, ImpliedVolMethod::Toms748);
     const OptionValuation probe = bsm(OptionType::Call, 0.2);
     const double forward = 100.0 / probe.discount_curve().df(probe.maturity_year_fraction());
     const auto at_vol = [&](double vol) {
@@ -212,14 +215,14 @@ TEST_CASE("far out of the money, every method agrees to tol", "[implied_vol]") {
     };
     const double target = at_vol(0.2).present_value();
     const auto method = GENERATE(
-        ImpliedVolMethod::NewtonRaphson, ImpliedVolMethod::Bisection, ImpliedVolMethod::Brent);
+        ImpliedVolMethod::NewtonRaphson, ImpliedVolMethod::Bisection, ImpliedVolMethod::Toms748);
     const auto result = implied_volatility(target, at_vol(0.5), {.method = method});
     REQUIRE(result.converged);
     CHECK_THAT(result.implied_vol, close_to(0.2, 0.0, 1e-8));
 }
 
 TEST_CASE("bracketing solvers converge near the upper vol bound", "[implied_vol]") {
-    const auto method = GENERATE(ImpliedVolMethod::Bisection, ImpliedVolMethod::Brent);
+    const auto method = GENERATE(ImpliedVolMethod::Bisection, ImpliedVolMethod::Toms748);
     const double target = bsm(OptionType::Put, 4.9).present_value();
     const auto result =
         implied_volatility(target, bsm(OptionType::Put, 0.2), {.method = method, .max_iter = 300});
@@ -236,7 +239,7 @@ TEST_CASE("implied vol rejects a negative min_vega", "[implied_vol]") {
 TEST_CASE("American binomial implied vol round-trips", "[implied_vol]") {
     const auto type = GENERATE(OptionType::Call, OptionType::Put);
     const auto method = GENERATE(
-        ImpliedVolMethod::NewtonRaphson, ImpliedVolMethod::Bisection, ImpliedVolMethod::Brent);
+        ImpliedVolMethod::NewtonRaphson, ImpliedVolMethod::Bisection, ImpliedVolMethod::Toms748);
     std::optional<DiscountCurve> q_curve;
     if (type == OptionType::Call) {
         q_curve = DiscountCurve::flat(0.02);  // so early exercise matters for calls
@@ -271,7 +274,7 @@ TEST_CASE("an unconverged solve is never well determined", "[implied_vol]") {
     const auto result =
         implied_volatility(target,
                            bsm(OptionType::Call, 0.2),
-                           {.method = ImpliedVolMethod::Brent, .tol = 1e-14, .max_iter = 3});
+                           {.method = ImpliedVolMethod::Toms748, .tol = 1e-14, .max_iter = 3});
     CHECK_FALSE(result.converged);
     CHECK_FALSE(result.well_determined);
 }
@@ -440,8 +443,9 @@ TEST_CASE("implied vol reports pricing calls", "[implied_vol]") {
     CHECK(result.function_evaluations >= result.iterations + 2);
 }
 
-TEST_CASE("numerical engines default to Brent", "[implied_vol]") {
-    // Brent needs no vega; Newton's numerical vega costs 2 extra pricings a step.
+TEST_CASE("numerical engines default to TOMS 748", "[implied_vol]") {
+    // TOMS 748 needs no vega; Newton's numerical vega costs 2 extra pricings a
+    // step.
     const auto engine = GENERATE(PricingMethod::Binomial, PricingMethod::PdeFd);
     const double target = american_put(engine, 0.3).present_value();
     const auto by_default = implied_volatility(target, american_put(engine, 0.2), {});

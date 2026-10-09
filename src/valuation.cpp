@@ -43,7 +43,7 @@ constexpr double kPerCentScale = 0.01;
 
 enum class GreekKind { PresentValue, Delta, Gamma, Vega, Theta, Rho };
 
-/// Memoisation key: mirrors the Python cache keyed on accessor + kwargs.
+/// Memoisation key: the accessor plus the options that change its result.
 struct CacheKey {
     GreekKind kind;
     std::optional<GreekCalculationMethod> method;
@@ -175,7 +175,7 @@ std::unique_ptr<engines::PricingEngine> build_engine(const detail::ValuationStat
 // ── Greek method resolution ─────────────────────────────────────────
 
 /// Pathwise / likelihood-ratio estimators exist for European vanillas on a
-/// GBM process without discrete dividends (mirrors the Python eligibility).
+/// GBM process without discrete dividends.
 bool mc_analytic_eligible(const detail::ValuationState& state) {
     const auto* vanilla = std::get_if<VanillaSpec>(&state.spec);
     return state.pricing_method == PricingMethod::MonteCarlo && state.underlying.is_gbm() &&
@@ -565,8 +565,8 @@ struct OptionValuation::Impl {
                     name(state.pricing_method)));
             }
         }
-        // The European leg keeps the contract shape (a barrier CV uses
-        // European barrier legs, mirroring the Python dataclasses.replace).
+        // The European leg keeps the contract shape: a barrier control
+        // variate uses European barrier legs.
         std::optional<OptionSpec> euro;
         if (const auto* vanilla = std::get_if<VanillaSpec>(&state.spec)) {
             euro = VanillaSpec({
@@ -709,9 +709,9 @@ void OptionValuation::init(detail::Underlying underlying,
                 "Barrier monitoring schedule must not start before pricing_date.");
         }
         // Monte Carlo needs every discrete monitoring date on the simulation
-        // grid: inject the schedule into the process's observation dates
-        // (mirrors the Python facade's sim_config injection). A correlated
-        // process's grid is fixed by its context instead (checked below).
+        // grid: inject the schedule into the process's observation dates. A
+        // correlated process's grid is fixed by its context instead (checked
+        // below).
         if (pricing_method == PricingMethod::MonteCarlo && dates.has_value() &&
             impl_->state.underlying.correlation_context() == nullptr) {
             impl_->state.underlying = impl_->state.underlying.with_observation_dates(*dates);

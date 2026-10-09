@@ -30,8 +30,8 @@ public:
 };
 
 /// A public API was configured inconsistently (e.g. wrong parameter type for
-/// the chosen pricing method). Most type errors are compile-time in C++, so
-/// this is rarer than in the Python reference implementation.
+/// the chosen pricing method). Most such mistakes are caught at compile time;
+/// this covers the combinations only known at run time.
 class ConfigurationError : public DerivativesPricingError {
 public:
     using DerivativesPricingError::DerivativesPricingError;

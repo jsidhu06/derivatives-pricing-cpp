@@ -45,8 +45,12 @@ SimulationConfig config(int paths, int num_steps = 26) {
     return {.paths = paths, .end_date = kMaturity, .num_steps = num_steps};
 }
 
-JdParams jd_params(double lambd = 0.4, double mu = -0.1, double delta = 0.15) {
-    return {.initial_value = 100.0, .volatility = 0.20, .lambd = lambd, .mu = mu, .delta = delta};
+JdParams jd_params(double jump_intensity = 0.4, double mu = -0.1, double delta = 0.15) {
+    return {.initial_value = 100.0,
+            .volatility = 0.20,
+            .jump_intensity = jump_intensity,
+            .mu = mu,
+            .delta = delta};
 }
 
 SrdParams srd_params() {
@@ -67,12 +71,12 @@ double merton_price(OptionType type,
                     double spot,
                     double sigma,
                     double rate,
-                    double lambd,
+                    double jump_intensity,
                     double mu,
                     double delta,
                     double maturity) {
     const double kbar = std::exp(mu + 0.5 * delta * delta) - 1.0;
-    const double lambda_prime = lambd * (1.0 + kbar);
+    const double lambda_prime = jump_intensity * (1.0 + kbar);
     double weight = std::exp(-lambda_prime * maturity);
     double price = 0.0;
     for (int n = 0; n < 60; ++n) {
@@ -80,7 +84,7 @@ double merton_price(OptionType type,
             weight *= lambda_prime * maturity / n;
         }
         const double sigma_n = std::sqrt(sigma * sigma + n * delta * delta / maturity);
-        const double rate_n = rate - lambd * kbar + n * std::log1p(kbar) / maturity;
+        const double rate_n = rate - jump_intensity * kbar + n * std::log1p(kbar) / maturity;
         const UnderlyingData leg(spot, sigma_n, md(rate_n));
         price +=
             weight * OptionValuation(leg, spec(type), PricingMethod::Analytical).present_value();
@@ -117,7 +121,7 @@ SimulationConfig shared_config(const std::shared_ptr<const CorrelationContext>& 
 TEST_CASE("JdParams validation", "[processes][jd]") {
     CHECK_THROWS_MATCHES(JdProcess(md(), jd_params(-0.1), config(100)),
                          ValidationError,
-                         message_contains("JdParams.lambd"));
+                         message_contains("JdParams.jump_intensity"));
     CHECK_THROWS_MATCHES(JdProcess(md(), jd_params(0.4, -0.1, -0.2), config(100)),
                          ValidationError,
                          message_contains("JdParams.delta"));
@@ -125,9 +129,10 @@ TEST_CASE("JdParams validation", "[processes][jd]") {
                          ValidationError,
                          message_contains("JdParams.mu"));
     CHECK_THROWS_MATCHES(
-        JdProcess(md(),
-                  {.initial_value = -5.0, .volatility = 0.2, .lambd = 0, .mu = 0, .delta = 0},
-                  config(100)),
+        JdProcess(
+            md(),
+            {.initial_value = -5.0, .volatility = 0.2, .jump_intensity = 0, .mu = 0, .delta = 0},
+            config(100)),
         ValidationError,
         message_contains("JdParams.initial_value"));
 }

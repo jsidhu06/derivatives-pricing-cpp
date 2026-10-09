@@ -62,8 +62,8 @@ const PdeEngine::Solution& PdeEngine::solution() const {
 
 PdeEngine::Solution PdeEngine::compute_solution() const {
     // smax_mult unset: vanillas get the domain sized to sigma*sqrt(T); custom
-    // payoffs keep the legacy span (their affine boundary models are fitted
-    // to the payoff wings). An explicit smax_mult is the legacy domain.
+    // payoffs keep the fixed span (their affine boundary models are fitted
+    // to the payoff wings). An explicit smax_mult sets the fixed span.
     const PdeParams& params = pde_params(state_);
     std::optional<pde::Domain> domain;
     if (const std::optional<double> strike = state_.strike();

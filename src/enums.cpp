@@ -60,8 +60,8 @@ std::string_view to_string(ImpliedVolMethod value) noexcept {
             return "newton_raphson";
         case ImpliedVolMethod::Bisection:
             return "bisection";
-        case ImpliedVolMethod::Brent:
-            return "brent";
+        case ImpliedVolMethod::Toms748:
+            return "toms748";
     }
     return "unknown";
 }

@@ -20,9 +20,9 @@ TEST_CASE("default params validate", "[params]") {
 }
 
 TEST_CASE("MonteCarloParams validation", "[params]") {
-    CHECK_THROWS_MATCHES(MonteCarloParams{.deg = 0}.validate(),
+    CHECK_THROWS_MATCHES(MonteCarloParams{.basis_degree = 0}.validate(),
                          ValidationError,
-                         message_contains("deg must be >= 1"));
+                         message_contains("basis_degree must be >= 1"));
     CHECK_THROWS_MATCHES(MonteCarloParams{.ridge_lambda = -1e-3}.validate(),
                          ValidationError,
                          message_contains("ridge_lambda must be >= 0"));
