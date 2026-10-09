@@ -114,7 +114,8 @@ public:
     [[nodiscard]] double rho(GreekOptions options = {}) const;
 
     /// The underlying as constructed: `UnderlyingData` for deterministic
-    /// engines, `GbmProcess` for Monte Carlo.
+    /// engines, the path process (`GbmProcess`, `JdProcess` or `SrdProcess`)
+    /// for Monte Carlo.
     [[nodiscard]] const std::variant<UnderlyingData, GbmProcess, JdProcess, SrdProcess>&
     underlying() const noexcept;
     [[nodiscard]] const OptionSpec& spec() const noexcept;

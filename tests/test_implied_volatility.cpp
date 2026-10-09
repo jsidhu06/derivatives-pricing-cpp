@@ -133,13 +133,14 @@ TEST_CASE("implied vol matches the Python reference implementation", "[implied_v
         const auto result = implied_volatility(
             row.target_price, replay(row, 0.2), {.method = solver_of(row.solver), .max_iter = 200});
         REQUIRE(result.converged);
-        // Both implementations stop anywhere the price is within tol (1e-8)
-        // of the target, so the vols agree to ~tol / vega, not bitwise.
-        CHECK_THAT(result.implied_vol, close_to(row.implied_vol, 0.0, 1e-6));
-        // Newton stops on the price residual itself; the bracketing solvers
-        // stop on a vol bracket narrower than tol and return its midpoint, so
-        // their repricing error scales with vega (the Python reference's own
-        // bisection answers miss by up to 1.4e-7 on these rows).
+        // `tol` (1e-8) is a vol tolerance in both libraries: each stops within
+        // tol of the same root, so the vols differ by at most 2 * tol (measured
+        // 3.8e-9; Newton, which takes the same steps in both, 1e-14).
+        CHECK_THAT(result.implied_vol, close_to(row.implied_vol, 0.0, 2e-8));
+        // Repricing error is about vega * (distance to the root): tiny for
+        // Newton, which lands on the root, and up to vega * tol for the
+        // bracketing solvers, which return the midpoint of a bracket narrower
+        // than tol (measured 3.2e-11 and 1.4e-7 on these rows).
         const bool newton = solver_of(row.solver) == ImpliedVolMethod::NewtonRaphson;
         CHECK_THAT(replay(row, result.implied_vol).present_value(),
                    close_to(row.target_price, 0.0, newton ? 2e-8 : 5e-7));
