@@ -85,3 +85,19 @@ if(DP_BUILD_TESTS)
     fetchcontent_makeavailable(Catch2)
     list(APPEND CMAKE_MODULE_PATH "${catch2_SOURCE_DIR}/extras")
 endif()
+
+# --- Google Benchmark (benchmarks only) --------------------------------------
+if(DP_BUILD_BENCHMARKS)
+    set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+    set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+    set(BENCHMARK_ENABLE_GTEST_TESTS OFF CACHE BOOL "" FORCE)
+    set(BENCHMARK_ENABLE_WERROR OFF CACHE BOOL "" FORCE)
+    fetchcontent_declare(
+        benchmark
+        GIT_REPOSITORY https://github.com/google/benchmark.git
+        GIT_TAG v1.9.1
+        GIT_SHALLOW TRUE
+        SYSTEM EXCLUDE_FROM_ALL
+    )
+    fetchcontent_makeavailable(benchmark)
+endif()

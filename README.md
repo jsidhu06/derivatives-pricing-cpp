@@ -119,7 +119,8 @@ int main() {
 
 Requirements: CMake ≥ 3.25, Ninja, a C++20 compiler (GCC 13+, Clang 17+),
 network access on first configure (dependencies are fetched and pinned via
-`FetchContent`: Eigen 3.4, Boost.Math 1.86, spdlog 1.15, Catch2 3.8).
+`FetchContent`: Eigen 3.4, Boost.Math 1.86, spdlog 1.15, Catch2 3.8, and Google
+Benchmark 1.9 when benchmarks are enabled).
 
 ```bash
 cmake --preset debug          # ASan + UBSan
@@ -129,7 +130,7 @@ ctest --preset debug
 cmake --workflow --preset release   # configure + build + test in one go
 ```
 
-Presets: `debug`, `release`, `relwithdebinfo`, `tidy` (clang-tidy on every TU),
+Presets: `debug`, `release`, `relwithdebinfo`, `bench`, `tidy` (clang-tidy on every TU),
 `ci-*` variants with `-Werror`, `ci-tsan` (ThreadSanitizer, clang-18; runs the
 `[threads]` tests), and `clang-debug` / `clang-release` (clang-18, `-Werror`) to
 exercise the second compiler in the CI matrix locally:
@@ -152,6 +153,20 @@ pre-commit run --all-files
 
 Formatting is `.clang-format` (Google base, 4-space indent, 100 columns); static
 analysis is `.clang-tidy`. Both run in CI.
+
+## Benchmarks
+
+`bench/` holds a [Google Benchmark](https://github.com/google/benchmark) suite,
+off by default (`DP_BUILD_BENCHMARKS`). Build it with the `bench` preset
+(Release, no tests); debug and sanitizer timings are not representative.
+
+```bash
+cmake --preset bench && cmake --build --preset bench
+build/bench/bench/dp_bench --benchmark_repetitions=5 --benchmark_report_aggregates_only=true
+```
+
+CI builds the suite in the release jobs and runs one iteration of each
+benchmark, to check that they run; shared runners are too noisy for timings.
 
 ## Design notes
 

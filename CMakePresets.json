@@ -42,6 +42,15 @@
       }
     },
     {
+      "name": "bench",
+      "displayName": "Release benchmarks (no tests)",
+      "inherits": "release",
+      "cacheVariables": {
+        "DP_BUILD_TESTS": "OFF",
+        "DP_BUILD_BENCHMARKS": "ON"
+      }
+    },
+    {
       "name": "tidy",
       "displayName": "Debug + clang-tidy",
       "inherits": "debug",
@@ -63,6 +72,7 @@
       "displayName": "CI Release (-Werror)",
       "inherits": "release",
       "cacheVariables": {
+        "DP_BUILD_BENCHMARKS": "ON",
         "DP_WARNINGS_AS_ERRORS": "ON"
       }
     },
@@ -71,6 +81,7 @@
       "displayName": "CI clang-tidy",
       "inherits": "tidy",
       "cacheVariables": {
+        "DP_BUILD_BENCHMARKS": "ON",
         "DP_WARNINGS_AS_ERRORS": "ON"
       }
     },
@@ -124,6 +135,10 @@
     {
       "name": "relwithdebinfo",
       "configurePreset": "relwithdebinfo"
+    },
+    {
+      "name": "bench",
+      "configurePreset": "bench"
     },
     {
       "name": "tidy",

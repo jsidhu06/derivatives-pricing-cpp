@@ -53,6 +53,12 @@ jobs:
       - name: Test
         run: ctest --preset ${{ matrix.preset }} --parallel "$(nproc)"
 
+      # One iteration of each benchmark: checks they run, not how fast (shared
+      # runners are too noisy for timings).
+      - name: Benchmark smoke run
+        if: matrix.preset == 'ci-release'
+        run: ./build/ci-release/bench/dp_bench --benchmark_min_time=1x
+
   thread-sanitizer:
     name: ci-tsan (clang-18)
     runs-on: ubuntu-24.04

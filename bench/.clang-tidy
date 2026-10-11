@@ -1,0 +1,7 @@
+---
+# Benchmarks: the project configuration, minus the dead-store check, which
+# flags Google Benchmark's `for (auto _ : state)` loop variable.
+InheritParentConfig: true
+Checks: >
+  -clang-analyzer-deadcode.DeadStores
+...
