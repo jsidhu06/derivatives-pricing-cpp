@@ -41,9 +41,9 @@ constexpr double kDefaultVegaBump = 0.01;
 constexpr double kDefaultRateBump = 0.01;
 constexpr double kPerCentScale = 0.01;
 
-enum class GreekKind { PresentValue, Delta, Gamma, Vega, Theta, Rho };
+enum class GreekKind { Delta, Gamma, Vega, Theta, Rho };
 
-/// Memoisation key: the accessor plus the options that change its result.
+/// Memoisation key: the greek plus the options that change its result.
 struct CacheKey {
     GreekKind kind;
     std::optional<GreekCalculationMethod> method;
@@ -440,10 +440,11 @@ struct OptionValuation::Impl {
     detail::ValuationState state;
     std::unique_ptr<engines::PricingEngine> engine;
 
-    // Output cache. A recursive mutex lets memoised accessors call each other
-    // (gamma -> present_value) from the same thread; concurrent callers on
-    // one instance serialise so an expensive solve runs once.
+    // Output caches. A recursive mutex lets memoised accessors call each
+    // other (gamma -> present_value) from the same thread; concurrent callers
+    // on one instance serialise so an expensive solve runs once.
     mutable std::recursive_mutex mutex;
+    mutable std::optional<double> present_value;
     mutable std::map<CacheKey, double> cache;
 
     template <typename Compute>
@@ -502,8 +503,6 @@ struct OptionValuation::Impl {
                     return vanilla.theta(numerical);
                 case GreekKind::Rho:
                     return vanilla.rho(numerical);
-                case GreekKind::PresentValue:
-                    break;
             }
             throw ConfigurationError("unexpected greek kind in barrier short-circuit");
         }
@@ -748,13 +747,16 @@ OptionValuation& OptionValuation::operator=(OptionValuation&&) noexcept = defaul
 // ── Present value ───────────────────────────────────────────────────
 
 double OptionValuation::present_value() const {
-    return impl_->memoize({GreekKind::PresentValue, std::nullopt, std::nullopt}, [&] {
-        const double base = impl_->engine->present_value();
-        if (control_variate_requested(impl_->state.params)) {
-            return impl_->apply_control_variate(base);
-        }
-        return base;
-    });
+    const std::lock_guard lock(impl_->mutex);
+    std::optional<double>& cached = impl_->present_value;
+    if (cached) {
+        return *cached;
+    }
+    const double base = impl_->engine->present_value();
+    const double value =
+        control_variate_requested(impl_->state.params) ? impl_->apply_control_variate(base) : base;
+    cached = value;
+    return value;
 }
 
 std::optional<double> OptionValuation::std_error() const {
