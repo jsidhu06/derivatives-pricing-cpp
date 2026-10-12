@@ -95,6 +95,40 @@ jobs:
       - name: Test
         run: ctest --preset ci-tsan --parallel "$(nproc)"
 
+  coverage:
+    name: coverage (gcc-13)
+    runs-on: ubuntu-24.04
+    env:
+      CC: gcc-13
+      CXX: g++-13
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build g++-13
+          pipx install gcovr==8.6
+      - name: Cache FetchContent dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/coverage/_deps
+          key: deps-${{ runner.os }}-coverage-${{ hashFiles('cmake/Dependencies.cmake') }}
+      - name: Configure
+        run: cmake --preset coverage
+      - name: Build
+        run: cmake --build --preset coverage --parallel
+      - name: Test
+        run: ctest --preset coverage --parallel "$(nproc)"
+      # Settings (what is reported, branch handling) are in gcovr.cfg.
+      - name: Coverage report
+        run: gcovr build/coverage --gcov-executable gcov-13 --cobertura coverage.xml --print-summary
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml
+          disable_search: true
+
   clang-tidy:
     name: clang-tidy
     runs-on: ubuntu-24.04

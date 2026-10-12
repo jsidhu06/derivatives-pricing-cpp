@@ -37,12 +37,14 @@ set(DP_SANITIZER "address,undefined"
     CACHE STRING "Sanitizers for DP_ENABLE_SANITIZERS: address,undefined or thread"
 )
 set_property(CACHE DP_SANITIZER PROPERTY STRINGS "address,undefined" "thread")
+option(DP_ENABLE_COVERAGE "Instrument the library and tests for line coverage (gcov)" OFF)
 option(DP_ENABLE_CLANG_TIDY "Run clang-tidy as part of the build" OFF)
 option(DP_ENABLE_LTO "Enable link-time optimisation for Release builds" OFF)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(CompilerWarnings)
 include(Sanitizers)
+include(Coverage)
 include(StaticAnalysis)
 include(Dependencies)
 
@@ -95,6 +97,7 @@ target_link_libraries(
 target_compile_features(derivatives_pricing PUBLIC cxx_std_20)
 dp_set_project_warnings(derivatives_pricing)
 dp_enable_sanitizers(derivatives_pricing)
+dp_enable_coverage(derivatives_pricing)
 dp_enable_clang_tidy(derivatives_pricing)
 
 if(DP_ENABLE_LTO)
@@ -151,6 +154,7 @@ if(DP_ENABLE_SANITIZERS)
 else()
     message(STATUS "  Sanitizers:        OFF")
 endif()
+message(STATUS "  Coverage:          ${DP_ENABLE_COVERAGE}")
 message(STATUS "  clang-tidy:        ${DP_ENABLE_CLANG_TIDY}")
 message(STATUS "  Warnings as errors ${DP_WARNINGS_AS_ERRORS}")
 message(STATUS "")

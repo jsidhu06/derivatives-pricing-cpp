@@ -52,6 +52,16 @@
       }
     },
     {
+      "name": "coverage",
+      "displayName": "Coverage (Debug, gcov instrumentation, no examples)",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "DP_ENABLE_COVERAGE": "ON",
+        "DP_BUILD_EXAMPLES": "OFF"
+      }
+    },
+    {
       "name": "tidy",
       "displayName": "Debug + clang-tidy",
       "inherits": "debug",
@@ -142,6 +152,10 @@
       "configurePreset": "bench"
     },
     {
+      "name": "coverage",
+      "configurePreset": "coverage"
+    },
+    {
       "name": "tidy",
       "configurePreset": "tidy"
     },
@@ -201,6 +215,11 @@
       "name": "relwithdebinfo",
       "inherits": "base-test",
       "configurePreset": "relwithdebinfo"
+    },
+    {
+      "name": "coverage",
+      "inherits": "base-test",
+      "configurePreset": "coverage"
     },
     {
       "name": "ci-debug",

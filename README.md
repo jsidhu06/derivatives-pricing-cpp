@@ -1,6 +1,7 @@
 # derivatives-pricing-cpp
 
 [![CI](https://github.com/jsidhu06/derivatives-pricing-cpp/actions/workflows/ci.yml/badge.svg)](https://github.com/jsidhu06/derivatives-pricing-cpp/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/jsidhu06/derivatives-pricing-cpp/branch/main/graph/badge.svg)](https://codecov.io/gh/jsidhu06/derivatives-pricing-cpp)
 
 A C++20 library for options pricing and Greeks computation, with a unified API
 across analytical, binomial tree, finite-difference and Monte Carlo engines. A C++ implementation of the
@@ -108,10 +109,17 @@ cmake --build --preset debug
 ctest --preset debug
 ```
 
-Other presets: `relwithdebinfo`, `bench`, `tidy` (clang-tidy), `ci-*`
-(`-Werror`), `ci-tsan` (ThreadSanitizer) and `clang-debug` / `clang-release`.
-The debug presets skip tests tagged `[slow]`; the release presets run
-everything.
+Other presets: `relwithdebinfo`, `bench`, `coverage`, `tidy` (clang-tidy),
+`ci-*` (`-Werror`), `ci-tsan` (ThreadSanitizer) and `clang-debug` /
+`clang-release`. The debug presets skip tests tagged `[slow]`; the release
+presets run everything.
+
+For a coverage report (needs [`gcovr`](https://gcovr.com)):
+
+```bash
+cmake --preset coverage && cmake --build --preset coverage && ctest --preset coverage
+gcovr build/coverage
+```
 
 Formatting (`.clang-format`) and static analysis (`.clang-tidy`) run in CI
 and through `pre-commit`.

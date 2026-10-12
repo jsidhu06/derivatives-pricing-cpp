@@ -1,0 +1,24 @@
+coverage:
+  status:
+    project:
+      default:
+        target: 85%
+        threshold: 1%
+    patch: off
+
+# The report carries branch data, but compilers add a branch for every call
+# that may throw, so a line whose only untaken branch is an exception path
+# would show as partially covered. Count lines only.
+parsers:
+  cobertura:
+    partials_as_hits: true
+
+comment:
+  layout: "reach,diff,flags,tree"
+  behavior: default
+  require_changes: false
+
+ignore:
+  - "tests"
+  - "examples"
+  - "bench"
