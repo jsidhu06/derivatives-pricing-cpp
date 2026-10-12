@@ -23,7 +23,6 @@ using namespace dp;
 using Catch::Matchers::WithinAbs;
 using Catch::Matchers::WithinRel;
 using dp::test::close_to;
-using dp::test::flat_curve;
 using dp::test::kMaturity;
 using dp::test::kPricingDate;
 using dp::test::message_contains;
@@ -67,7 +66,7 @@ constexpr GreekOptions kNumerical{.method = GreekCalculationMethod::Numerical};
 // ---------------------------------------------------------------------------
 
 TEST_CASE("PDE scheme and grid variants agree for European options", "[pde]") {
-    const auto q_curve = flat_curve(kPricingDate, kMaturity, 0.01);
+    const auto q_curve = DiscountCurve::flat(0.01);
     const auto u = ud(100.0, 0.20, q_curve);
     const auto call = spec(OptionType::Call);
 
@@ -213,7 +212,7 @@ PayoffSpec payoff_spec(ExerciseType exercise = ExerciseType::European) {
 }  // namespace
 
 TEST_CASE("custom payoff prices across schemes and grids", "[pde][payoff]") {
-    const auto q_curve = flat_curve(kPricingDate, kMaturity, 0.01);
+    const auto q_curve = DiscountCurve::flat(0.01);
     const auto u = ud(100.0, 0.20, q_curve);
     const auto exercise = GENERATE(ExerciseType::European, ExerciseType::American);
     const auto s = payoff_spec(exercise);

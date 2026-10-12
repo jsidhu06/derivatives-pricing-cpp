@@ -23,8 +23,8 @@ public:
     /// Discount factors > 1 (negative rates) are accepted with a warning.
     DiscountCurve(Eigen::ArrayXd times, Eigen::ArrayXd dfs);
 
-    /// Flat continuously-compounded curve on `[0, end_time]`.
-    [[nodiscard]] static DiscountCurve flat(double rate, double end_time = 100.0);
+    /// Flat continuously-compounded curve, defined on `[0, 100]` years.
+    [[nodiscard]] static DiscountCurve flat(double rate);
 
     /// Curve from piecewise-constant forward rates. `times` has N+1 entries
     /// starting at 0; `forwards` has N entries, one per interval.

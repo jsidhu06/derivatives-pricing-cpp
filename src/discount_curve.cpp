@@ -18,6 +18,9 @@ namespace {
 
 constexpr double kOriginTolerance = 1e-12;
 constexpr double kNegativeRateTolerance = 1e-12;
+/// Last knot of `DiscountCurve::flat`: long enough that no realistic maturity
+/// extrapolates.
+constexpr double kFlatCurveEndTime = 100.0;
 
 bool strictly_increasing(const Eigen::ArrayXd& values) {
     for (Eigen::Index i = 1; i < values.size(); ++i) {
@@ -67,13 +70,10 @@ DiscountCurve::DiscountCurve(Eigen::ArrayXd times, Eigen::ArrayXd dfs)
     }
 }
 
-DiscountCurve DiscountCurve::flat(double rate, double end_time) {
+DiscountCurve DiscountCurve::flat(double rate) {
     detail::require_finite(rate, "rate");
-    if (!std::isfinite(end_time) || end_time <= 0.0) {
-        throw ValidationError("end_time must be positive");
-    }
     Eigen::ArrayXd times(2);
-    times << 0.0, end_time;
+    times << 0.0, kFlatCurveEndTime;
     return {times, (-rate * times).exp()};
 }
 

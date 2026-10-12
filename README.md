@@ -68,7 +68,7 @@ implied vol 0.2200
 
 ## Validation
 
-The test suite has 353 test cases and runs in CI on GCC 13 and Clang 18,
+The test suite has 352 test cases and runs in CI on GCC 13 and Clang 18,
 under AddressSanitizer, UndefinedBehaviorSanitizer and ThreadSanitizer, with
 clang-tidy and `-Werror`.
 

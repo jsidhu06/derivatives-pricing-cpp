@@ -32,7 +32,6 @@ using namespace dp;
 using Catch::Matchers::WithinAbs;
 using Catch::Matchers::WithinRel;
 using dp::test::close_to;
-using dp::test::flat_curve;
 using dp::test::kPricingDate;
 
 namespace {
@@ -45,8 +44,8 @@ double half_year_fraction() {
     return year_fraction(kPricingDate, kHalfYear, DayCountConvention::Act365F);
 }
 
-MarketData md(double rate = kRate, DateTime maturity = kHalfYear) {
-    return {kPricingDate, flat_curve(kPricingDate, maturity, rate), "USD"};
+MarketData md(double rate = kRate) {
+    return {kPricingDate, DiscountCurve::flat(rate), "USD"};
 }
 
 UnderlyingData ud(double spot = 100.0,
@@ -125,7 +124,7 @@ TEST_CASE("deep moneyness prices the discounted intrinsic on the tree and PDE", 
 
 TEST_CASE("one-day expiry is near intrinsic on the tree and PDE", "[edge]") {
     const auto maturity = kPricingDate + std::chrono::days{1};
-    const auto u = ud(100.0, 0.20, md(kRate, maturity));
+    const auto u = ud(100.0, 0.20, md());
     struct Case {
         OptionType type = OptionType::Call;
         double strike = 0.0;
@@ -211,7 +210,7 @@ TEST_CASE("deep ITM American put is worth at least intrinsic", "[edge][american]
 TEST_CASE("American put one to three days out is near intrinsic", "[binomial][edge][american]") {
     const int days = GENERATE(1, 2, 3);
     const auto maturity = kPricingDate + std::chrono::days{days};
-    const auto u = ud(80.0, 0.20, md(kRate, maturity));
+    const auto u = ud(80.0, 0.20, md());
     const auto put = spec(OptionType::Put, 100.0, ExerciseType::American, maturity);
     CHECK_THAT(tree_pv(u, put, 100), WithinAbs(20.0, 0.5));
 }
@@ -223,7 +222,7 @@ TEST_CASE("deep ITM American call with a dividend yield dominates the European",
         double strike = 0.0;
     };
     const auto c = GENERATE(Case{120.0, 80.0}, Case{150.0, 90.0}, Case{200.0, 100.0});
-    const auto u = ud(c.spot, 0.20, md(), flat_curve(kPricingDate, kHalfYear, 0.05));
+    const auto u = ud(c.spot, 0.20, md(), DiscountCurve::flat(0.05));
     const double american =
         tree_pv(u, spec(OptionType::Call, c.strike, ExerciseType::American), 500);
     const double european = tree_pv(u, spec(OptionType::Call, c.strike), 500);
@@ -344,12 +343,12 @@ namespace {
 // at 4 * max(S, K) on the spot grid) with forward-intrinsic boundary
 // conditions; an explicit smax_mult keeps the legacy domain exactly.
 
-UnderlyingData bsm_market(double vol, double rate, double div_yield, DateTime maturity) {
+UnderlyingData bsm_market(double vol, double rate, double div_yield) {
     std::optional<DiscountCurve> q_curve;
     if (div_yield != 0.0) {
-        q_curve = flat_curve(kPricingDate, maturity, div_yield);
+        q_curve = DiscountCurve::flat(div_yield);
     }
-    return ud(100.0, vol, md(rate, maturity), std::move(q_curve));
+    return ud(100.0, vol, md(rate), std::move(q_curve));
 }
 
 bool any_pde_warning(const dp::test::WarningCapture& capture) {
@@ -366,7 +365,7 @@ TEST_CASE("short-dated ATM options price like BSM on the auto PDE domain", "[pde
     const auto grid = GENERATE(PdeSpaceGrid::Spot, PdeSpaceGrid::LogSpot);
     const auto type = GENERATE(OptionType::Call, OptionType::Put);
     const DateTime maturity = kPricingDate + horizon;
-    const auto u = bsm_market(0.20, kRate, 0.0, maturity);
+    const auto u = bsm_market(0.20, kRate, 0.0);
     const auto s = spec(type, 100.0, ExerciseType::European, maturity);
     CHECK_THAT(pde_pv(u, s, {.space_grid = grid}),
                WithinRel(bsm_pv(u, s), 2e-3));  // measured <= 4.4e-4
@@ -393,7 +392,7 @@ TEST_CASE("auto PDE domain matches BSM across tenors, vols, strikes and carry",
                                     to_string(grid),
                                     to_string(type));
                             const DateTime maturity = kPricingDate + std::chrono::days{days};
-                            const auto u = bsm_market(vol, rate, div_yield, maturity);
+                            const auto u = bsm_market(vol, rate, div_yield);
                             const auto s =
                                 spec(type, 100.0 * moneyness, ExerciseType::European, maturity);
                             CHECK_THAT(pde_pv(u, s, {.space_grid = grid}),
@@ -410,7 +409,7 @@ TEST_CASE("auto PDE domain: refinement, Greeks and very short maturities", "[pde
     const auto grid = GENERATE(PdeSpaceGrid::Spot, PdeSpaceGrid::LogSpot);
     CAPTURE(to_string(grid));
     const DateTime one_day = kPricingDate + std::chrono::days{1};
-    const auto u = bsm_market(0.20, kRate, 0.0, one_day);
+    const auto u = bsm_market(0.20, kRate, 0.0);
     const auto s = spec(OptionType::Call, 100.0, ExerciseType::European, one_day);
     const double bsm = bsm_pv(u, s);
 
@@ -431,7 +430,7 @@ TEST_CASE("auto PDE domain: refinement, Greeks and very short maturities", "[pde
     }
     SECTION("a 1-minute option is resolved without a warning (no minimum width)") {
         const DateTime one_minute = kPricingDate + std::chrono::minutes{1};
-        const auto short_u = bsm_market(0.20, kRate, 0.0, one_minute);
+        const auto short_u = bsm_market(0.20, kRate, 0.0);
         const auto short_s = spec(OptionType::Call, 100.0, ExerciseType::European, one_minute);
         const dp::test::WarningCapture capture;
         const double value = pde_pv(short_u, short_s, {.space_grid = grid});
@@ -456,7 +455,7 @@ TEST_CASE("the auto PDE domain need not contain the strike", "[pde][edge][domain
     const auto grid = GENERATE(PdeSpaceGrid::Spot, PdeSpaceGrid::LogSpot);
     CAPTURE(to_string(c.type), c.strike, days, to_string(exercise), to_string(grid));
     const DateTime maturity = kPricingDate + std::chrono::days{days};
-    const auto u = bsm_market(0.20, kRate, 0.0, maturity);
+    const auto u = bsm_market(0.20, kRate, 0.0);
     const auto s = spec(c.type, c.strike, exercise, maturity);
     const dp::test::WarningCapture capture;
     const double value = pde_pv(u, s, {.space_grid = grid});
@@ -467,7 +466,7 @@ TEST_CASE("the auto PDE domain need not contain the strike", "[pde][edge][domain
 
 TEST_CASE("high-vol long-dated PDE domains", "[pde][edge][domain]") {
     const DateTime maturity = make_datetime(2030, 1, 1);
-    const auto u = bsm_market(0.80, kRate, 0.0, maturity);
+    const auto u = bsm_market(0.80, kRate, 0.0);
     const auto s = spec(OptionType::Call, 100.0, ExerciseType::European, maturity);
     const double bsm = bsm_pv(u, s);
     const auto log_params = [](std::optional<double> smax_mult) {
@@ -504,7 +503,7 @@ TEST_CASE("high-vol long-dated PDE domains", "[pde][edge][domain]") {
     }
     SECTION("an explicit smax_mult reproduces the old 1-day bug, now with a warning") {
         const DateTime one_day = kPricingDate + std::chrono::days{1};
-        const auto short_u = bsm_market(0.20, kRate, 0.0, one_day);
+        const auto short_u = bsm_market(0.20, kRate, 0.0);
         const auto short_s = spec(OptionType::Call, 100.0, ExerciseType::European, one_day);
         const dp::test::WarningCapture capture;
         CHECK_THAT(pde_pv(short_u, short_s, {.smax_mult = 4.0}), WithinRel(0.247901, 1e-5));
@@ -530,7 +529,7 @@ TEST_CASE("high-vol barriers widen the PDE far side (smax_mult unset)",
                  Case{BarrierDirection::Up, 120.0, OptionType::Put, BarrierAction::In});
     CAPTURE(to_string(c.type), c.level);
     const DateTime maturity = make_datetime(2030, 1, 1);
-    const auto u = bsm_market(0.80, kRate, 0.0, maturity);
+    const auto u = bsm_market(0.80, kRate, 0.0);
     const BarrierSpec contract({.option_type = c.type,
                                 .exercise_type = ExerciseType::European,
                                 .strike = 100.0,

@@ -13,10 +13,10 @@
 
 using Catch::Matchers::WithinAbs;
 using Catch::Matchers::WithinRel;
+using dp::DiscountCurve;
 using dp::DividendSchedule;
 using dp::ForwardInputs;
 using dp::make_datetime;
-using dp::test::flat_curve;
 using dp::test::kMaturity;
 using dp::test::kPricingDate;
 
@@ -37,7 +37,7 @@ TEST_CASE("normalize_dividends sorts by ex-date and validates amounts", "[divide
 
 TEST_CASE("pv_discrete_dividends discounts to the curve date", "[dividends]") {
     const double r = 0.05;
-    const auto curve = flat_curve(kPricingDate, kMaturity, r);
+    const auto curve = DiscountCurve::flat(r);
     const auto ex = make_datetime(2025, 7, 1);
     const DividendSchedule divs{{ex, 0.5}};
 
@@ -48,7 +48,7 @@ TEST_CASE("pv_discrete_dividends discounts to the curve date", "[dividends]") {
 }
 
 TEST_CASE("pv_discrete_dividends is empty-safe and respects the window", "[dividends]") {
-    const auto curve = flat_curve(kPricingDate, kMaturity, 0.05);
+    const auto curve = DiscountCurve::flat(0.05);
     CHECK(dp::pv_discrete_dividends({}, kPricingDate, kMaturity, curve) == 0.0);
 
     // After maturity: excluded. Before pricing date: excluded.
@@ -62,7 +62,7 @@ TEST_CASE("pv_discrete_dividends is empty-safe and respects the window", "[divid
 }
 
 TEST_CASE("pv_discrete_dividends include_start semantics", "[dividends]") {
-    const auto curve = flat_curve(kPricingDate, kMaturity, 0.05);
+    const auto curve = DiscountCurve::flat(0.05);
     const DividendSchedule at_start{{kPricingDate, 2.0}};
 
     // Closed on the left: dividend at exactly start_date counts, DF = 1.
@@ -86,7 +86,7 @@ TEST_CASE("pv_discrete_dividends include_start semantics", "[dividends]") {
 
 TEST_CASE("pv_discrete_dividends forward-discounts to start_date", "[dividends]") {
     const double r = 0.05;
-    const auto curve = flat_curve(kPricingDate, kMaturity, r);
+    const auto curve = DiscountCurve::flat(r);
     const auto start = make_datetime(2025, 4, 1);
     const auto ex = make_datetime(2025, 7, 1);
     const DividendSchedule divs{{ex, 1.0}};
@@ -101,8 +101,8 @@ TEST_CASE("pv_discrete_dividends forward-discounts to start_date", "[dividends]"
 TEST_CASE("pv_discrete_dividends discounts at r - q with a dividend curve", "[dividends]") {
     const double r = 0.05;
     const double q = 0.03;
-    const auto r_curve = flat_curve(kPricingDate, kMaturity, r);
-    const auto q_curve = flat_curve(kPricingDate, kMaturity, q);
+    const auto r_curve = DiscountCurve::flat(r);
+    const auto q_curve = DiscountCurve::flat(q);
     const auto start = make_datetime(2025, 4, 1);
     const auto ex = make_datetime(2025, 10, 1);
     const DividendSchedule divs{{ex, 1.0}};
@@ -127,8 +127,8 @@ TEST_CASE("forward price with continuous dividend curve", "[forward]") {
     const double spot = 100.0;
     const double r = 0.05;
     const double q = 0.02;
-    const auto r_curve = flat_curve(kPricingDate, kMaturity, r);
-    const auto q_curve = flat_curve(kPricingDate, kMaturity, q);
+    const auto r_curve = DiscountCurve::flat(r);
+    const auto q_curve = DiscountCurve::flat(q);
     const double ttm = dp::year_fraction(kPricingDate, kMaturity);
 
     const ForwardInputs inputs{
@@ -144,7 +144,7 @@ TEST_CASE("forward price with continuous dividend curve", "[forward]") {
 TEST_CASE("forward price with discrete dividends", "[forward]") {
     const double spot = 100.0;
     const double r = 0.05;
-    const auto curve = flat_curve(kPricingDate, kMaturity, r);
+    const auto curve = DiscountCurve::flat(r);
     const auto ex = make_datetime(2025, 7, 1);
     const double ttm = dp::year_fraction(kPricingDate, kMaturity);
     const double t_div = dp::year_fraction(kPricingDate, ex);
@@ -165,8 +165,8 @@ TEST_CASE("forward price with a yield and discrete dividends discounts at r - q"
     const double r = 0.05;
     const double q = 0.03;
     const double amount = 2.0;
-    const auto r_curve = flat_curve(kPricingDate, kMaturity, r);
-    const auto q_curve = flat_curve(kPricingDate, kMaturity, q);
+    const auto r_curve = DiscountCurve::flat(r);
+    const auto q_curve = DiscountCurve::flat(q);
     const auto ex = make_datetime(2025, 7, 1);
     const double ttm = dp::year_fraction(kPricingDate, kMaturity);
     const double t_div = dp::year_fraction(kPricingDate, ex);
@@ -191,8 +191,8 @@ TEST_CASE("forward price with a yield and discrete dividends discounts at r - q"
 }
 
 TEST_CASE("forward price warns when both dividend inputs are supplied", "[forward]") {
-    const auto r_curve = flat_curve(kPricingDate, kMaturity, 0.05);
-    const auto q_curve = flat_curve(kPricingDate, kMaturity, 0.02);
+    const auto r_curve = DiscountCurve::flat(0.05);
+    const auto q_curve = DiscountCurve::flat(0.02);
     const ForwardInputs inputs{
         .spot = 100.0,
         .pricing_date = kPricingDate,
@@ -207,7 +207,7 @@ TEST_CASE("forward price warns when both dividend inputs are supplied", "[forwar
 }
 
 TEST_CASE("forward price validation", "[forward]") {
-    const auto curve = flat_curve(kPricingDate, kMaturity, 0.05);
+    const auto curve = DiscountCurve::flat(0.05);
     SECTION("maturity must be after pricing date") {
         const ForwardInputs inputs{.spot = 100.0,
                                    .pricing_date = kMaturity,
@@ -238,7 +238,7 @@ TEST_CASE("forward price validation", "[forward]") {
 // ---------------------------------------------------------------------------
 
 TEST_CASE("put-call parity rhs and gap are consistent", "[forward][parity]") {
-    const auto curve = flat_curve(kPricingDate, kMaturity, 0.05);
+    const auto curve = DiscountCurve::flat(0.05);
     const ForwardInputs inputs{.spot = 100.0,
                                .pricing_date = kPricingDate,
                                .maturity = kMaturity,
@@ -255,7 +255,7 @@ TEST_CASE("put-call parity rhs equals S - K e^{-rT} without dividends", "[forwar
     const double r = 0.05;
     const double spot = 100.0;
     const double strike = 95.0;
-    const auto curve = flat_curve(kPricingDate, kMaturity, r);
+    const auto curve = DiscountCurve::flat(r);
     const double ttm = dp::year_fraction(kPricingDate, kMaturity);
     const ForwardInputs inputs{.spot = spot,
                                .pricing_date = kPricingDate,

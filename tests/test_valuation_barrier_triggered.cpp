@@ -29,7 +29,6 @@
 
 using namespace dp;
 using dp::test::close_to;
-using dp::test::flat_curve;
 using dp::test::kMaturity;
 using dp::test::kPricingDate;
 
@@ -58,7 +57,7 @@ constexpr std::array<Dispatch, 3> kNumericalPaths{
 constexpr double kRebate = 5.0;
 
 const MarketData& market() {
-    static const MarketData md(kPricingDate, flat_curve(kPricingDate, kMaturity, 0.05), "USD");
+    static const MarketData md(kPricingDate, DiscountCurve::flat(0.05), "USD");
     return md;
 }
 

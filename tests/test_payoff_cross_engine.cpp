@@ -29,7 +29,6 @@
 using namespace dp;
 using Catch::Matchers::WithinRel;
 using dp::test::close_to;
-using dp::test::flat_curve;
 using dp::test::kMaturity;
 using dp::test::kPricingDate;
 
@@ -64,7 +63,7 @@ constexpr Payoff kStraddle{"straddle", straddle};
 constexpr Payoff kCappedStrangle{"capped strangle", capped_strangle};
 
 MarketData md() {
-    return {kPricingDate, flat_curve(kPricingDate, kMaturity, kRate), "USD"};
+    return {kPricingDate, DiscountCurve::flat(kRate), "USD"};
 }
 
 UnderlyingData ud(DividendSchedule dividends = {}) {

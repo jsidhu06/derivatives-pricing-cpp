@@ -14,15 +14,13 @@
 
 using namespace dp;
 using Catch::Matchers::WithinRel;
-using dp::test::flat_curve;
-using dp::test::kMaturity;
 using dp::test::kPricingDate;
 using dp::test::message_contains;
 
 namespace {
 
 MarketData md() {
-    return {kPricingDate, flat_curve(kPricingDate, kMaturity, 0.05), "USD"};
+    return {kPricingDate, DiscountCurve::flat(0.05), "USD"};
 }
 
 }  // namespace
@@ -72,11 +70,8 @@ TEST_CASE("UnderlyingData sorts dividends and validates amounts", "[underlying]"
 
 TEST_CASE("UnderlyingData warns when both dividend inputs are given", "[underlying]") {
     const dp::test::WarningCapture capture;
-    const UnderlyingData ud(100.0,
-                            0.2,
-                            md(),
-                            {{make_datetime(2025, 6, 1), 1.0}},
-                            flat_curve(kPricingDate, kMaturity, 0.02));
+    const UnderlyingData ud(
+        100.0, 0.2, md(), {{make_datetime(2025, 6, 1), 1.0}}, DiscountCurve::flat(0.02));
     CHECK(capture.any_contains("both dividend_curve and discrete_dividends"));
     CHECK(ud.dividend_curve().has_value());
 }
@@ -99,7 +94,7 @@ TEST_CASE("UnderlyingData with_* return modified copies", "[underlying]") {
     CHECK(later.currency() == "USD");
     CHECK(ud.pricing_date() == kPricingDate);
 
-    const auto recurved = ud.with_discount_curve(DiscountCurve::flat(0.10, 1.0));
+    const auto recurved = ud.with_discount_curve(DiscountCurve::flat(0.10));
     CHECK_THAT(recurved.discount_curve().df(1.0), WithinRel(std::exp(-0.10), 1e-12));
     CHECK_THAT(ud.discount_curve().df(1.0), WithinRel(std::exp(-0.05), 1e-12));
 

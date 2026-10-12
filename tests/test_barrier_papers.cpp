@@ -70,12 +70,11 @@ struct Tol {
 /// The papers' market: flat 10% rate, ACT/365F, optional flat dividend yield.
 UnderlyingData paper_underlying(double spot,
                                 double vol,
-                                std::optional<double> div_yield = std::nullopt,
-                                double curve_end = 2.0) {
-    const MarketData market(kPricingDate, DiscountCurve::flat(0.10, curve_end), "USD");
+                                std::optional<double> div_yield = std::nullopt) {
+    const MarketData market(kPricingDate, DiscountCurve::flat(0.10), "USD");
     std::optional<DiscountCurve> q_curve;
     if (div_yield.has_value()) {
-        q_curve = DiscountCurve::flat(*div_yield, 2.0);
+        q_curve = DiscountCurve::flat(*div_yield);
     }
     return {spot, vol, market, {}, std::move(q_curve)};
 }
@@ -512,8 +511,7 @@ TEST_CASE("Broadie-Glasserman Table 2.1: discrete DOC PVs", "[barrier][paper][sl
     EngineValues pvs;
     for (const auto method : kAllEngines) {
         pvs[engine_slot(method)] =
-            OptionValuation(paper_underlying(100.0, 0.30, std::nullopt, 3.0), spec, method)
-                .present_value();
+            OptionValuation(paper_underlying(100.0, 0.30), spec, method).present_value();
     }
     paper_log(std::format("BG97 DOC PV H={:.0f} m={} | true={:.3f} corrected={:.3f} |{}",
                           row.barrier,

@@ -15,7 +15,7 @@ using dp::MarketData;
 using dp::test::message_contains;
 
 namespace {
-const auto kCurve = dp::DiscountCurve::flat(0.05, 1.0);
+const auto kCurve = dp::DiscountCurve::flat(0.05);
 }
 
 TEST_CASE("MarketData valid construction", "[market_data]") {
@@ -39,7 +39,7 @@ TEST_CASE("MarketData rejects empty currency", "[market_data]") {
 }
 
 TEST_CASE("MarketData is copyable and independent of the source curve", "[market_data]") {
-    const MarketData md(dp::test::kPricingDate, dp::DiscountCurve::flat(0.03, 2.0), "EUR");
+    const MarketData md(dp::test::kPricingDate, dp::DiscountCurve::flat(0.03), "EUR");
     const MarketData copy = md;  // NOLINT(performance-unnecessary-copy-initialization)
     CHECK(copy.currency() == "EUR");
     CHECK_THAT(copy.discount_curve().df(2.0), WithinRel(md.discount_curve().df(2.0), 1e-15));

@@ -190,7 +190,7 @@ TEST_CASE("binomial barrier greek guards", "[barrier][binomial][greeks]") {
         // the barrier under Boyle-Lau alignment. The American put is deep in
         // the money, so early exercise locks PV = K - S = 7.6, delta = -1 and
         // theta = 0 — only the step-2 gamma stencil is unusable.
-        const MarketData market(kPricingDate, DiscountCurve::flat(0.05, 2.0), "USD");
+        const MarketData market(kPricingDate, DiscountCurve::flat(0.05), "USD");
         auto params = base_params(73.0,
                                   BarrierDirection::Up,
                                   BarrierAction::Out,

@@ -38,7 +38,7 @@ DiscountCurve sample_curve() {
 // ---------------------------------------------------------------------------
 
 TEST_CASE("flat curve basics", "[discount_curve]") {
-    const auto curve = DiscountCurve::flat(0.05, 1.0);
+    const auto curve = DiscountCurve::flat(0.05);
     const auto rate = curve.flat_rate();
     REQUIRE(rate.has_value());
     CHECK_THAT(rate.value_or(0.0), WithinRel(0.05, 1e-12));
@@ -46,7 +46,7 @@ TEST_CASE("flat curve basics", "[discount_curve]") {
     CHECK_THAT(curve.df(1.0), WithinRel(std::exp(-0.05), 1e-12));
 }
 
-TEST_CASE("flat curve defaults to a 100y domain", "[discount_curve]") {
+TEST_CASE("flat curve covers a 100y domain without warning", "[discount_curve]") {
     const dp::test::WarningCapture capture;
     const auto curve = DiscountCurve::flat(0.05);
     CHECK_THAT(curve.df(1.0), WithinRel(std::exp(-0.05), 1e-12));
@@ -55,17 +55,8 @@ TEST_CASE("flat curve defaults to a 100y domain", "[discount_curve]") {
 }
 
 TEST_CASE("flat curve with zero rate", "[discount_curve]") {
-    const auto curve = DiscountCurve::flat(0.0, 1.0);
+    const auto curve = DiscountCurve::flat(0.0);
     CHECK_THAT(curve.df(0.5), WithinAbs(1.0, 1e-15));
-}
-
-TEST_CASE("flat curve rejects non-positive end_time", "[discount_curve]") {
-    CHECK_THROWS_MATCHES(DiscountCurve::flat(0.05, -1.0),
-                         dp::ValidationError,
-                         message_contains("end_time must be positive"));
-    CHECK_THROWS_MATCHES(DiscountCurve::flat(0.05, 0.0),
-                         dp::ValidationError,
-                         message_contains("end_time must be positive"));
 }
 
 TEST_CASE("constructor validation", "[discount_curve]") {
@@ -192,7 +183,7 @@ TEST_CASE("vectorised df matches scalar df", "[discount_curve]") {
 
 TEST_CASE("extrapolation extends the last forward rate and warns", "[discount_curve]") {
     // Regression: the DF used to freeze past the last knot, i.e. a zero
-    // forward rate (flat(5%, 1y).df(2) gave 0.951 instead of 0.905).
+    // forward rate (a 5% curve ending at 1y gave df(2) = 0.951, not 0.905).
     const auto curve = sample_curve();
     const double t_far = GENERATE(3.0, 10.0, 20.0, 100.0);
     const double last_forward = std::log(0.95 / 0.90);  // on [1, 2]
@@ -201,8 +192,8 @@ TEST_CASE("extrapolation extends the last forward rate and warns", "[discount_cu
     CHECK_THAT(curve.df(t_far), WithinRel(0.90 * std::exp(-last_forward * (t_far - 2.0)), 1e-12));
     CHECK(capture.any_contains("Extrapolating discount curve"));
 
-    const auto flat = DiscountCurve::flat(0.05, 1.0);
-    CHECK_THAT(flat.df(2.0), WithinRel(std::exp(-0.10), 1e-12));
+    const DiscountCurve one_year(arr({0.0, 1.0}), arr({1.0, std::exp(-0.05)}));
+    CHECK_THAT(one_year.df(2.0), WithinRel(std::exp(-0.10), 1e-12));
 }
 
 TEST_CASE("the first zero rate applies back to the origin", "[discount_curve]") {
@@ -258,12 +249,12 @@ TEST_CASE("df(0) is one even when the curve starts after zero", "[discount_curve
 // ---------------------------------------------------------------------------
 
 TEST_CASE("flat curve forward rate equals flat rate", "[discount_curve]") {
-    const auto curve = DiscountCurve::flat(0.05, 2.0);
+    const auto curve = DiscountCurve::flat(0.05);
     CHECK_THAT(curve.forward_rate(0.25, 0.75), WithinRel(0.05, 1e-10));
 }
 
 TEST_CASE("forward_rate rejects t1 <= t0", "[discount_curve]") {
-    const auto curve = DiscountCurve::flat(0.05, 1.0);
+    const auto curve = DiscountCurve::flat(0.05);
     CHECK_THROWS_MATCHES(
         curve.forward_rate(0.5, 0.5), dp::ValidationError, message_contains("Need t1 > t0"));
 }
@@ -278,7 +269,7 @@ TEST_CASE("forward rate is consistent with discount factors", "[discount_curve]"
 }
 
 TEST_CASE("step_forward_rates on a flat curve", "[discount_curve]") {
-    const auto curve = DiscountCurve::flat(0.05, 2.0);
+    const auto curve = DiscountCurve::flat(0.05);
     const auto fwds = curve.step_forward_rates(arr({0.0, 0.5, 1.0, 1.5, 2.0}));
     REQUIRE(fwds.size() == 4);
     for (const double fwd : fwds) {
@@ -287,7 +278,7 @@ TEST_CASE("step_forward_rates on a flat curve", "[discount_curve]") {
 }
 
 TEST_CASE("step_forward_rates rejects non-increasing grid", "[discount_curve]") {
-    const auto curve = DiscountCurve::flat(0.05, 1.0);
+    const auto curve = DiscountCurve::flat(0.05);
     CHECK_THROWS_MATCHES(curve.step_forward_rates(arr({0.0, 0.5, 0.5})),
                          dp::ValidationError,
                          message_contains("strictly increasing"));

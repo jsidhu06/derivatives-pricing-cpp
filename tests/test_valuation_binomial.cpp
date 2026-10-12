@@ -22,7 +22,6 @@ using namespace dp;
 using Catch::Matchers::WithinAbs;
 using Catch::Matchers::WithinRel;
 using dp::test::close_to;
-using dp::test::flat_curve;
 using dp::test::kMaturity;
 using dp::test::kPricingDate;
 using dp::test::message_contains;
@@ -109,7 +108,7 @@ TEST_CASE("more steps converge towards BSM", "[binomial]") {
 }
 
 TEST_CASE("dividend curve enters the drift", "[binomial]") {
-    const auto q_curve = flat_curve(kPricingDate, kMaturity, 0.03);
+    const auto q_curve = DiscountCurve::flat(0.03);
     const double with_q = tree_pv(ud(kSpot, kVol, md(), {}, q_curve), spec());
     CHECK(with_q < tree_pv(ud(), spec()));
 }

@@ -24,7 +24,6 @@ using namespace dp;
 using Catch::Matchers::WithinAbs;
 using Catch::Matchers::WithinRel;
 using dp::test::close_to;
-using dp::test::flat_curve;
 using dp::test::kMaturity;
 using dp::test::kPricingDate;
 
@@ -35,10 +34,8 @@ constexpr double kStrike = 100.0;
 constexpr double kRate = 0.05;
 constexpr double kVol = 0.20;
 
-MarketData md(DateTime pricing_date = kPricingDate,
-              DateTime maturity = kMaturity,
-              double rate = kRate) {
-    return {pricing_date, flat_curve(pricing_date, maturity, rate), "USD"};
+MarketData md(double rate = kRate) {
+    return {kPricingDate, DiscountCurve::flat(rate), "USD"};
 }
 
 UnderlyingData ud(double spot = kSpot,
@@ -91,7 +88,7 @@ TEST_CASE("dividends reduce the call price", "[bsm]") {
     const double base = pv(ud(), spec());
     CHECK(pv(ud(kSpot, kVol, std::nullopt, {{kPricingDate + std::chrono::days{180}, 1.0}}),
              spec()) < base);
-    CHECK(pv(ud(kSpot, kVol, flat_curve(kPricingDate, kMaturity, 0.03)), spec()) < base);
+    CHECK(pv(ud(kSpot, kVol, DiscountCurve::flat(0.03)), spec()) < base);
 }
 
 TEST_CASE("BSM satisfies put-call parity", "[bsm][parity]") {
@@ -101,8 +98,8 @@ TEST_CASE("BSM satisfies put-call parity", "[bsm][parity]") {
         CHECK_THAT(c - p, WithinRel(kSpot - kStrike * std::exp(-kRate), 1e-10));
     }
     SECTION("with dividend curve, against put_call_parity_rhs") {
-        const auto r_curve = flat_curve(kPricingDate, kMaturity, 0.04);
-        const auto q_curve = flat_curve(kPricingDate, kMaturity, 0.02);
+        const auto r_curve = DiscountCurve::flat(0.04);
+        const auto q_curve = DiscountCurve::flat(0.02);
         const UnderlyingData u(kSpot, 0.25, {kPricingDate, r_curve, "USD"}, {}, q_curve);
         const double c = pv(u, spec(OptionType::Call, 105.0));
         const double p = pv(u, spec(OptionType::Put, 105.0));
@@ -120,8 +117,8 @@ TEST_CASE("yield plus cash dividends: all deterministic engines share QuantLib's
           "[bsm][parity][dividends]") {
     // Cash dividends are discounted at r - q, as in QuantLib. With a 6% yield
     // and 3.0 dividends, discounting them at r instead is a ~0.1 parity error.
-    const auto r_curve = flat_curve(kPricingDate, kMaturity, kRate);
-    const auto q_curve = flat_curve(kPricingDate, kMaturity, 0.06);
+    const auto r_curve = DiscountCurve::flat(kRate);
+    const auto q_curve = DiscountCurve::flat(0.06);
     const DividendSchedule divs{{make_datetime(2025, 4, 1), 3.0},
                                 {make_datetime(2025, 10, 1), 3.0}};
     const dp::test::WarningCapture capture;
@@ -165,7 +162,7 @@ TEST_CASE("yield plus cash dividends: all deterministic engines share QuantLib's
 
 TEST_CASE("zero volatility prices discounted intrinsic", "[bsm][edge]") {
     const auto maturity = make_datetime(2025, 7, 3);  // ~0.5y
-    const MarketData market(kPricingDate, flat_curve(kPricingDate, maturity, kRate), "USD");
+    const MarketData market(kPricingDate, DiscountCurve::flat(kRate), "USD");
     const UnderlyingData u(100.0, 0.0, market);
     const double df = market.discount_curve().df(0.5);
 
@@ -180,7 +177,7 @@ TEST_CASE("zero volatility prices discounted intrinsic", "[bsm][edge]") {
 
 TEST_CASE("tiny volatility converges to discounted intrinsic", "[bsm][edge]") {
     const auto maturity = make_datetime(2025, 7, 3);
-    const MarketData market(kPricingDate, flat_curve(kPricingDate, maturity, kRate), "USD");
+    const MarketData market(kPricingDate, DiscountCurve::flat(kRate), "USD");
     const UnderlyingData u(100.0, 1e-4, market);
     const double df = market.discount_curve().df(0.5);
     CHECK_THAT(pv(u, spec(OptionType::Call, 80.0, maturity)), WithinRel(100.0 - 80.0 * df, 1e-2));
@@ -191,7 +188,7 @@ TEST_CASE("tiny volatility converges to discounted intrinsic", "[bsm][edge]") {
 
 TEST_CASE("one-day expiry is near intrinsic", "[bsm][edge]") {
     const auto maturity = kPricingDate + std::chrono::days{1};
-    const UnderlyingData u(100.0, kVol, md(kPricingDate, maturity));
+    const UnderlyingData u(100.0, kVol, md());
     CHECK_THAT(pv(u, spec(OptionType::Call, 90.0, maturity)), WithinAbs(10.0, 0.5));
     CHECK_THAT(pv(u, spec(OptionType::Put, 110.0, maturity)), WithinAbs(10.0, 0.5));
     CHECK_THAT(pv(u, spec(OptionType::Call, 110.0, maturity)), WithinAbs(0.0, 0.5));
@@ -201,7 +198,7 @@ TEST_CASE("one-day expiry is near intrinsic", "[bsm][edge]") {
 TEST_CASE("extreme rates still price", "[bsm][edge]") {
     const dp::test::WarningCapture capture;  // negative rates warn; that's fine here
     for (const double rate : {-0.02, 0.25, 0.50}) {
-        const UnderlyingData u(100.0, kVol, md(kPricingDate, kMaturity, rate));
+        const UnderlyingData u(100.0, kVol, md(rate));
         for (const auto type : {OptionType::Call, OptionType::Put}) {
             const double value = pv(u, spec(type));
             CHECK(std::isfinite(value));
@@ -269,26 +266,25 @@ TEST_CASE("theta sign and behaviour", "[bsm][greeks]") {
     CHECK(bsm(ud(), spec()).theta() < bsm(ud(70.0), spec()).theta());
 
     const double no_div = bsm(ud(), spec()).theta();
-    const double with_div =
-        bsm(ud(kSpot, kVol, flat_curve(kPricingDate, kMaturity, 0.03)), spec()).theta();
+    const double with_div = bsm(ud(kSpot, kVol, DiscountCurve::flat(0.03)), spec()).theta();
     CHECK(no_div < 0.0);
     CHECK(with_div < 0.0);
     CHECK_FALSE(std::abs(no_div - with_div) < 1e-8);
 
     const auto near = kPricingDate + std::chrono::days{2};
-    const UnderlyingData u(kSpot, kVol, md(kPricingDate, near));
+    const UnderlyingData u(kSpot, kVol, md());
     CHECK(bsm(u, spec(OptionType::Call, kStrike, near)).theta() < -0.05);
 }
 
 TEST_CASE("numerical theta is zero when the bump crosses maturity", "[bsm][greeks]") {
     const auto near = kPricingDate + std::chrono::days{1};
-    const UnderlyingData u(kSpot, kVol, md(kPricingDate, near));
+    const UnderlyingData u(kSpot, kVol, md());
     CHECK(bsm(u, spec(OptionType::Call, kStrike, near))
               .theta({.method = GreekCalculationMethod::Numerical, .bump = 2.0}) == 0.0);
 }
 
 TEST_CASE("delta with a dividend curve", "[bsm][greeks]") {
-    const auto q = flat_curve(kPricingDate, kMaturity, 0.03);
+    const auto q = DiscountCurve::flat(0.03);
     CHECK(bsm(ud(kSpot, kVol, q), spec(OptionType::Call)).delta() <
           bsm(ud(), spec(OptionType::Call)).delta());
     CHECK(bsm(ud(kSpot, kVol, q), spec(OptionType::Put)).delta() <

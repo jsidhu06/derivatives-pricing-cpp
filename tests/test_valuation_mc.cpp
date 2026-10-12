@@ -621,13 +621,12 @@ TEST_CASE("pathwise, likelihood-ratio and numerical Greeks agree", "[mc][greeks]
         rate_fwd << 0.04, 0.06;
         Eigen::ArrayXd div_fwd(2);
         div_fwd << 0.01, 0.03;
-        const DiscountCurve rates = s.term_curves
-                                        ? DiscountCurve::from_forwards(times, rate_fwd)
-                                        : dp::test::flat_curve(kPricingDate, kMaturity, 0.05);
+        const DiscountCurve rates = s.term_curves ? DiscountCurve::from_forwards(times, rate_fwd)
+                                                  : DiscountCurve::flat(0.05);
         std::optional<DiscountCurve> q_curve;
         if (s.dividends) {
             q_curve = s.term_curves ? DiscountCurve::from_forwards(times, div_fwd)
-                                    : dp::test::flat_curve(kPricingDate, kMaturity, 0.02);
+                                    : DiscountCurve::flat(0.02);
         }
         const MarketData market(kPricingDate, rates, "USD");
         const GbmProcess process(

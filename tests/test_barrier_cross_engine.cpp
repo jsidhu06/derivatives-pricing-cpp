@@ -30,14 +30,13 @@
 using namespace dp;
 using Catch::Matchers::WithinRel;
 using dp::test::close_to;
-using dp::test::flat_curve;
 using dp::test::kMaturity;
 using dp::test::kPricingDate;
 
 namespace {
 
 MarketData md(double rate = 0.05) {
-    return {kPricingDate, flat_curve(kPricingDate, kMaturity, rate), "USD"};
+    return {kPricingDate, DiscountCurve::flat(rate), "USD"};
 }
 
 /// The Python barrier suite's default market: S = 100, sigma = 20%, r = 5%, q = 0.
@@ -235,12 +234,11 @@ TEST_CASE("binomial half-step alignment tracks the PDE on discrete barriers",
     // knock-ins and the reverse knock-out below missed the PDE by 3-4.5%.
     // Measured with alignment: DOP 2.3%, the others <= 0.2%.
     const auto maturity = kPricingDate + std::chrono::days{73};  // T = 0.2
-    const double ttm = year_fraction(kPricingDate, maturity, DayCountConvention::Act365F);
     const UnderlyingData u(100.0,
                            0.25,
-                           MarketData(kPricingDate, DiscountCurve::flat(0.05, ttm), "USD"),
+                           MarketData(kPricingDate, DiscountCurve::flat(0.05), "USD"),
                            {},
-                           DiscountCurve::flat(0.02, ttm));
+                           DiscountCurve::flat(0.02));
     struct Case {
         const char* id = nullptr;
         double level = 0.0;
@@ -312,8 +310,7 @@ struct PdeScenario {
 };
 
 double scenario_pv(const PdeScenario& s, const PdeParams& params) {
-    const MarketData market(
-        kPricingDate, s.r_curve.value_or(flat_curve(kPricingDate, kMaturity, s.rate)), "USD");
+    const MarketData market(kPricingDate, s.r_curve.value_or(DiscountCurve::flat(s.rate)), "USD");
     const UnderlyingData u(s.spot, s.vol, market, {}, s.q_curve);
     const BarrierSpec spec({.option_type = s.type,
                             .exercise_type = s.exercise,
@@ -331,7 +328,7 @@ double scenario_pv(const PdeScenario& s, const PdeParams& params) {
 }
 
 DiscountCurve q_flat(double rate) {
-    return flat_curve(kPricingDate, kMaturity, rate);
+    return DiscountCurve::flat(rate);
 }
 
 }  // namespace
@@ -491,7 +488,7 @@ TEST_CASE("American barriers with discrete dividends agree on the PDE and MC",
     // The tree rejects barriers with discrete dividends (its escrowed
     // adjustment smears the ex-date jump), so the PDE (ex-date grid shift)
     // and MC (pathwise jump) are the only two engines that price this.
-    const MarketData market(kPricingDate, DiscountCurve::flat(0.05, 2.0), "USD");
+    const MarketData market(kPricingDate, DiscountCurve::flat(0.05), "USD");
     const DividendSchedule dividends{{kPricingDate + std::chrono::days{90}, 2.0},
                                      {kPricingDate + std::chrono::days{270}, 2.0}};
     struct Case {

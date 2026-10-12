@@ -21,7 +21,6 @@
 using namespace dp;
 using Catch::Matchers::ContainsSubstring;
 using Catch::Matchers::WithinRel;
-using dp::test::flat_curve;
 using dp::test::kMaturity;
 using dp::test::kPricingDate;
 using dp::test::message_contains;
@@ -29,7 +28,7 @@ using dp::test::message_contains;
 namespace {
 
 MarketData md() {
-    return {kPricingDate, flat_curve(kPricingDate, kMaturity, 0.05), "USD"};
+    return {kPricingDate, DiscountCurve::flat(0.05), "USD"};
 }
 UnderlyingData ud() {
     return {100.0, 0.2, md()};
@@ -256,7 +255,7 @@ TEST_CASE("concurrent queries on one instance agree", "[valuation][cache][thread
 // ---------------------------------------------------------------------------
 
 TEST_CASE("pricing and Greeks do not mutate the underlying", "[valuation][purity]") {
-    const auto q_curve = flat_curve(kPricingDate, kMaturity, 0.02);
+    const auto q_curve = DiscountCurve::flat(0.02);
     const UnderlyingData underlying(100.0, 0.2, md(), {}, q_curve);
     const OptionValuation ov(underlying, vanilla(), PricingMethod::Analytical);
 

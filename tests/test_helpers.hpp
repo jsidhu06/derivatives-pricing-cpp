@@ -32,12 +32,6 @@ inline constexpr double kVol = 0.20;
 inline constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 inline constexpr double kInfinity = std::numeric_limits<double>::infinity();
 
-/// Flat curve whose domain ends exactly at `maturity` (mirrors the Python
-/// test helper of the same name).
-inline DiscountCurve flat_curve(DateTime pricing_date, DateTime maturity, double rate) {
-    return DiscountCurve::flat(rate, year_fraction(pricing_date, maturity));
-}
-
 /// RAII capture of `dp::warn` messages. Restores the default handler on exit.
 ///
 /// Messages are stored behind a shared_ptr so the handler (which outlives
