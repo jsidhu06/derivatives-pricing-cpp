@@ -35,6 +35,9 @@ class Underlying;
 /// | vega  | volatility bump (absolute)               | 0.01         |
 /// | theta | calendar days added to the pricing date  | 1.0          |
 /// | rho   | parallel zero-rate bump (absolute)       | 0.01         |
+///
+/// Differences are central, except vega when the volatility is no larger
+/// than its bump, which uses a forward difference.
 struct GreekOptions {
     std::optional<GreekCalculationMethod> method = std::nullopt;
     std::optional<double> bump = std::nullopt;

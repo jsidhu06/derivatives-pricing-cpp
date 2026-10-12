@@ -243,6 +243,15 @@ TEST_CASE("vega is positive, peaks ATM and grows with maturity", "[bsm][greeks]"
           0.0);
 }
 
+TEST_CASE("numerical vega below its bump uses a forward difference", "[bsm][greeks]") {
+    // Regression: at a volatility below the 1% bump the down leg asked for a
+    // negative volatility and threw. Struck at the forward, where the price
+    // is close to linear in vol, so a forward difference is accurate.
+    const double forward = kSpot * std::exp(kRate);
+    const auto ov = bsm(ud(kSpot, 0.005), spec(OptionType::Call, forward));
+    CHECK_THAT(ov.vega(kNumerical), WithinRel(ov.vega(kAnalytical), 1e-2));
+}
+
 TEST_CASE("rho sign and monotonicity", "[bsm][greeks]") {
     CHECK(bsm(ud(), spec(OptionType::Call)).rho() > 0.0);
     CHECK(bsm(ud(), spec(OptionType::Put)).rho() < 0.0);

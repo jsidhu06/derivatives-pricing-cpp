@@ -860,6 +860,11 @@ double OptionValuation::vega(GreekOptions options) const {
         const double vol = state.underlying.volatility();
         const double eps = options.bump.value_or(kDefaultVegaBump);
         const auto up = impl_->rebuild(state.underlying.with_volatility(vol + eps));
+        if (vol <= eps) {
+            // No room for the down bump: a volatility cannot be negative, and
+            // zero is degenerate. Forward difference from the current value.
+            return (up.present_value() - present_value()) / eps * kPerCentScale;
+        }
         const auto dn = impl_->rebuild(state.underlying.with_volatility(vol - eps));
         return (up.present_value() - dn.present_value()) / (2.0 * eps) * kPerCentScale;
     });

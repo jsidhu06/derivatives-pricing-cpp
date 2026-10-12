@@ -457,6 +457,22 @@ TEST_CASE("numerical engines default to TOMS 748", "[implied_vol]") {
     CHECK(by_default.function_evaluations < newton.function_evaluations);
 }
 
+TEST_CASE("a quote at intrinsic value is reported as not well determined", "[implied_vol]") {
+    // Regression: a deep in-the-money American put is worth its intrinsic
+    // value at every small volatility, so the solve ends near zero vol. The
+    // conditioning check then bumped the vol down by 1% for a numerical vega
+    // and threw on the negative volatility.
+    const MarketData market(kPricingDate, DiscountCurve::flat(0.05), "USD");
+    const VanillaSpec put = vanilla(OptionType::Put, ExerciseType::American, 120.0);
+    const OptionValuation start(UnderlyingData(100.0, 0.3, market), put, PricingMethod::Binomial);
+
+    const dp::test::WarningCapture warnings;
+    const auto result = implied_volatility(20.0, start, {});
+    CHECK(result.implied_vol < 0.01);
+    CHECK_FALSE(result.well_determined);
+    CHECK(warnings.any_contains("is not determined by the price"));
+}
+
 TEST_CASE("a root on a bracket end returns without solving", "[implied_vol]") {
     const double target = bsm(OptionType::Call, 0.4).present_value();
     const auto result = implied_volatility(
