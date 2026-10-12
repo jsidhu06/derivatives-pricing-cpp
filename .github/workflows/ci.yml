@@ -53,6 +53,14 @@ jobs:
       - name: Test
         run: ctest --preset ${{ matrix.preset }} --parallel "$(nproc)"
 
+      - name: Run examples
+        if: matrix.preset == 'ci-release'
+        run: |
+          for example in build/ci-release/examples/dp_example_*; do
+            echo "== $example"
+            "$example"
+          done
+
       # One iteration of each benchmark: checks they run, not how fast (shared
       # runners are too noisy for timings).
       - name: Benchmark smoke run

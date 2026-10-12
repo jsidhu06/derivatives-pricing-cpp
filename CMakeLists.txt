@@ -29,6 +29,7 @@ else()
 endif()
 
 option(DP_BUILD_TESTS "Build the unit tests" ${DP_DEFAULT_BUILD_TESTS})
+option(DP_BUILD_EXAMPLES "Build the example programs (examples/)" ${DP_DEFAULT_BUILD_TESTS})
 option(DP_BUILD_BENCHMARKS "Build the Google Benchmark suite (bench/)" OFF)
 option(DP_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 option(DP_ENABLE_SANITIZERS "Enable the sanitizers selected by DP_SANITIZER" OFF)
@@ -115,6 +116,13 @@ if(DP_BUILD_TESTS)
 endif()
 
 # ---------------------------------------------------------------------------
+# Examples
+# ---------------------------------------------------------------------------
+if(DP_BUILD_EXAMPLES)
+    add_subdirectory(examples)
+endif()
+
+# ---------------------------------------------------------------------------
 # Benchmarks
 # ---------------------------------------------------------------------------
 if(DP_BUILD_BENCHMARKS)
@@ -136,6 +144,7 @@ message(STATUS "derivatives_pricing ${PROJECT_VERSION}")
 message(STATUS "  Build type:        ${CMAKE_BUILD_TYPE}")
 message(STATUS "  Compiler:          ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
 message(STATUS "  Tests:             ${DP_BUILD_TESTS}")
+message(STATUS "  Examples:          ${DP_BUILD_EXAMPLES}")
 message(STATUS "  Benchmarks:        ${DP_BUILD_BENCHMARKS}")
 if(DP_ENABLE_SANITIZERS)
     message(STATUS "  Sanitizers:        ${DP_SANITIZER}")

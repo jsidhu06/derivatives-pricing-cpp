@@ -66,9 +66,13 @@ PDE       PV 8.7382  delta -0.5306
 implied vol 0.2200
 ```
 
+More in [`examples/`](examples): the same contract across all four engines
+with Greeks, barrier options, Monte Carlo with standard errors, and an
+implied-volatility smile. They build with the library as `dp_example_*`.
+
 ## Validation
 
-The test suite has 352 test cases and runs in CI on GCC 13 and Clang 18,
+The test suite has 355 test cases and runs in CI on GCC 13 and Clang 18,
 under AddressSanitizer, UndefinedBehaviorSanitizer and ThreadSanitizer, with
 clang-tidy and `-Werror`.
 

@@ -47,6 +47,7 @@
       "inherits": "release",
       "cacheVariables": {
         "DP_BUILD_TESTS": "OFF",
+        "DP_BUILD_EXAMPLES": "OFF",
         "DP_BUILD_BENCHMARKS": "ON"
       }
     },
