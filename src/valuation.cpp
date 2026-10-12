@@ -459,10 +459,10 @@ struct OptionValuation::Impl {
     }
 
     /// Fresh valuation with the same spec/method/params on a bumped underlying.
+    /// A grid engine's copy inherits this valuation's far-field domain, so
+    /// both legs of a finite difference are solved on the same domain.
     [[nodiscard]] OptionValuation rebuild(const detail::Underlying& bumped) const {
-        return bumped.visit([&](const auto& u) {
-            return OptionValuation(u, state.spec, state.pricing_method, state.params);
-        });
+        return {bumped, state.spec, state.pricing_method, state.params, engine->grid_domain()};
     }
 
     /// The vanilla valuation an inception-triggered knock-in collapses to.
@@ -645,10 +645,19 @@ OptionValuation::OptionValuation(SrdProcess process,
     init(detail::Underlying(std::move(process)), std::move(spec), pricing_method, params);
 }
 
+OptionValuation::OptionValuation(detail::Underlying underlying,
+                                 OptionSpec spec,
+                                 PricingMethod pricing_method,
+                                 std::optional<ValuationParams> params,
+                                 std::optional<std::pair<double, double>> pde_domain) {
+    init(std::move(underlying), std::move(spec), pricing_method, params, pde_domain);
+}
+
 void OptionValuation::init(detail::Underlying underlying,
                            OptionSpec spec,
                            PricingMethod pricing_method,
-                           std::optional<ValuationParams> params) {
+                           std::optional<ValuationParams> params,
+                           std::optional<std::pair<double, double>> pde_domain) {
     const auto& spec_currency = currency_of(spec);
     if (spec_currency.has_value() && *spec_currency != underlying.currency()) {
         throw UnsupportedFeatureError(
@@ -699,6 +708,7 @@ void OptionValuation::init(detail::Underlying underlying,
         .params = resolved_params,
         .currency = std::move(currency),
         .option_type = option_type,
+        .pde_domain = pde_domain,
     });
 
     if (impl_->is_barrier()) {

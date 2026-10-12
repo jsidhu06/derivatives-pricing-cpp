@@ -614,6 +614,9 @@ double PdeBarrierEngine::discounted_rebate_theta(double last_dtau) const {
 }
 
 pde::Domain PdeBarrierEngine::far_field_domain() const {
+    if (state_.pde_domain.has_value()) {
+        return *state_.pde_domain;
+    }
     return pde::barrier_domain(
         state_, spec().strike(), pde::log_forward(state_), pde_params(state_));
 }
@@ -621,6 +624,9 @@ pde::Domain PdeBarrierEngine::far_field_domain() const {
 const PdeEngine& PdeBarrierEngine::vanilla_equivalent_engine() const {
     if (vanilla_engine_ == nullptr) {
         const auto& spec = std::get<BarrierSpec>(state_.spec);
+        // No inherited `pde_domain`: that would be a barrier domain, and the
+        // facade answers numerical Greeks of a triggered knock-in from its
+        // own vanilla-equivalent valuation, not from bumped copies of this one.
         vanilla_state_.emplace(detail::ValuationState{
             .underlying = state_.underlying,
             .spec = OptionSpec{detail::vanilla_equivalent_spec(spec)},

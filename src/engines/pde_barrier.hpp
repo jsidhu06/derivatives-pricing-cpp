@@ -42,9 +42,10 @@ private:
     [[nodiscard]] bool is_european_knock_in() const;
     /// Monitoring dates converted to tau (time remaining), sorted ascending.
     [[nodiscard]] std::vector<double> barrier_monitoring_taus() const;
-    /// Far-field `(smin, smax)` targets for the barrier grids
-    /// (`pde::barrier_domain`); a continuous barrier replaces its side.
-    [[nodiscard]] std::pair<double, double> far_field_domain() const;
+    /// Far-field `(smin, smax)` targets for the barrier grids: the inherited
+    /// domain of a bumped valuation, else `pde::barrier_domain`. A continuous
+    /// barrier replaces its side.
+    [[nodiscard]] std::pair<double, double> far_field_domain() const override;
     [[nodiscard]] Solution compute_barrier_knock_out() const;
     /// Two-surface coupled active/inactive solve for American knock-ins.
     [[nodiscard]] Solution compute_barrier_knock_in() const;

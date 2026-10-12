@@ -11,6 +11,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <variant>
 
 /// Valuation facade: dispatches a contract spec + underlying + pricing method
@@ -144,10 +145,18 @@ public:
 
 private:
     struct Impl;
+    /// Bump-and-revalue copy: a valuation that inherits the PDE grid domain
+    /// of the one it is a bumped copy of (see `Impl::rebuild`).
+    OptionValuation(detail::Underlying underlying,
+                    OptionSpec spec,
+                    PricingMethod pricing_method,
+                    std::optional<ValuationParams> params,
+                    std::optional<std::pair<double, double>> pde_domain);
     void init(detail::Underlying underlying,
               OptionSpec spec,
               PricingMethod pricing_method,
-              std::optional<ValuationParams> params);
+              std::optional<ValuationParams> params,
+              std::optional<std::pair<double, double>> pde_domain = std::nullopt);
     std::unique_ptr<Impl> impl_;
 };
 

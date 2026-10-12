@@ -60,22 +60,31 @@ const PdeEngine::Solution& PdeEngine::solution() const {
     return *solution_;
 }
 
-PdeEngine::Solution PdeEngine::compute_solution() const {
+pde::Domain PdeEngine::far_field_domain() const {
+    if (state_.pde_domain.has_value()) {
+        return *state_.pde_domain;
+    }
     // smax_mult unset: vanillas get the domain sized to sigma*sqrt(T); custom
     // payoffs keep the fixed span (their affine boundary models are fitted
     // to the payoff wings). An explicit smax_mult sets the fixed span.
     const PdeParams& params = pde_params(state_);
-    std::optional<pde::Domain> domain;
-    if (const std::optional<double> strike = state_.strike();
-        !params.smax_mult.has_value() && strike.has_value() &&
+    const std::optional<double> strike = state_.strike();
+    if (!params.smax_mult.has_value() && strike.has_value() &&
         !std::holds_alternative<PayoffSpec>(state_.spec)) {
-        domain = pde::fitted_vanilla_domain(
+        return pde::fitted_vanilla_domain(
             state_, *strike, pde::log_forward(state_), params.space_grid);
     }
-    return compute_vanilla(domain);
+    return pde::fixed_span_domain(state_.underlying.initial_value(),
+                                  strike,
+                                  pde::resolved_smax_mult(params),
+                                  params.space_grid);
 }
 
-PdeEngine::Solution PdeEngine::compute_vanilla(std::optional<pde::Domain> domain) const {
+PdeEngine::Solution PdeEngine::compute_solution() const {
+    return compute_vanilla(far_field_domain());
+}
+
+PdeEngine::Solution PdeEngine::compute_vanilla(pde::Domain domain) const {
     const PdeParams& params = pde_params(state_);
     const bool early = state_.exercise_type() == ExerciseType::American;
     const auto* custom = std::get_if<PayoffSpec>(&state_.spec);
@@ -89,14 +98,13 @@ PdeEngine::Solution PdeEngine::compute_vanilla(std::optional<pde::Domain> domain
     validate_fd_inputs(state_, params, ttm, early, custom != nullptr);
 
     const int m_steps = params.spot_steps;
-    const double ref_price = strike.has_value() ? std::max(spot, *strike) : spot;
 
     const double smax_mult = pde::resolved_smax_mult(params);
     ArrayXd grid;
     ArrayXd S;
     double dx = 0.0;
     if (params.space_grid == PdeSpaceGrid::Spot) {
-        const auto [lo, hi] = domain.value_or(pde::Domain{0.0, smax_mult * ref_price});
+        const auto [lo, hi] = domain;
         grid = linspace(lo, hi, m_steps);
         S = grid;
         dx = (hi - lo) / m_steps;

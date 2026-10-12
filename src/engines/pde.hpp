@@ -42,8 +42,17 @@ public:
     [[nodiscard]] double gamma() const override;
     /// Per calendar day.
     [[nodiscard]] double theta() const override;
+    [[nodiscard]] std::optional<std::pair<double, double>> grid_domain() const override {
+        return far_field_domain();
+    }
 
 protected:
+    /// Far-field `(smin, smax)` targets of the spatial grid: the domain
+    /// inherited from the valuation this one was bumped from, else the auto
+    /// vanilla domain (`pde::fitted_vanilla_domain`) or the fixed
+    /// `smax_mult` span.
+    [[nodiscard]] virtual std::pair<double, double> far_field_domain() const;
+
     /// PDE solve outputs needed for the price and the grid Greeks.
     struct Solution {
         double price;
@@ -58,12 +67,10 @@ protected:
     /// Solve hook: the vanilla/custom-payoff solve here; subclasses replace
     /// it for their payoff family.
     [[nodiscard]] virtual Solution compute_solution() const;
-    /// Vanilla/custom-payoff solve on the free-far-field grid (also the
-    /// vanilla leg of barrier parity).
-    /// Vanilla/custom-payoff solve. `domain` `(smin, smax)` overrides the
-    /// fixed `smax_mult` span: the auto vanilla domain, or the barrier's
-    /// far-field domain for the knock-in parity leg.
-    [[nodiscard]] Solution compute_vanilla(std::optional<std::pair<double, double>> domain) const;
+    /// Vanilla/custom-payoff solve over the far-field targets `domain`
+    /// `(smin, smax)`: `far_field_domain()`, or the barrier's for the
+    /// knock-in parity leg.
+    [[nodiscard]] Solution compute_vanilla(std::pair<double, double> domain) const;
     /// Black-Scholes-identity theta read from one solved surface, with the
     /// forward rates over the first step (see `OptionValuation::theta`).
     [[nodiscard]] double grid_theta_identity(const Solution& result) const;

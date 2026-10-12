@@ -119,6 +119,14 @@ struct SpaceGridBuild {
 /// ln F(0, T) with the continuous yield and cash dividends (escrowed PV).
 [[nodiscard]] double log_forward(const detail::ValuationState& state);
 
+/// Fixed span around `ref = max(spot, strike)` (`ref = spot` without a
+/// strike): `[0, smax_mult * ref]` on the Spot grid,
+/// `[ref / smax_mult, smax_mult * ref]` on the LogSpot grid.
+[[nodiscard]] Domain fixed_span_domain(double spot,
+                                       std::optional<double> strike,
+                                       double smax_mult,
+                                       PdeSpaceGrid space_grid);
+
 /// Auto vanilla domain: the smallest log-interval containing the spot and
 /// the forward, each with 6 standard deviations of ln(S_T) of margin. The
 /// strike need not lie inside: the forward-intrinsic boundary conditions

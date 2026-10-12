@@ -325,6 +325,15 @@ double log_forward(const detail::ValuationState& state) {
     return std::log(std::max(spot - pv_divs, 1.0e-8 * spot) * df_q / df_r);
 }
 
+Domain fixed_span_domain(double spot,
+                         std::optional<double> strike,
+                         double smax_mult,
+                         PdeSpaceGrid space_grid) {
+    const double ref = strike.has_value() ? std::max(spot, *strike) : spot;
+    const double smin = space_grid == PdeSpaceGrid::Spot ? 0.0 : std::max(ref / smax_mult, 1.0e-8);
+    return {smin, smax_mult * ref};
+}
+
 Domain fitted_vanilla_domain(const detail::ValuationState& state,
                              double strike,
                              double log_fwd,

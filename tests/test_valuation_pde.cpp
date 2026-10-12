@@ -183,6 +183,21 @@ TEST_CASE("grid Greeks are the auto-selected method for PDE", "[pde][greeks]") {
     CHECK(ov.vega() > 0.0);
 }
 
+TEST_CASE("numerical PDE Greeks reuse the base valuation's grid domain", "[pde][greeks]") {
+    // Regression: the auto domain is sized from the volatility and the
+    // forward, so the two legs of a vega or rho bump were solved on different
+    // grids and the difference in grid error biased the Greek (vega by 1%,
+    // rho by 1.5% here on the Spot grid). The bumped legs now inherit the
+    // base valuation's domain.
+    const auto grid = GENERATE(PdeSpaceGrid::Spot, PdeSpaceGrid::LogSpot);
+    CAPTURE(grid);
+    const VanillaSpec call = spec(OptionType::Call, ExerciseType::European, 105.0);
+    const OptionValuation pde(ud(), call, PricingMethod::PdeFd, PdeParams{.space_grid = grid});
+    const OptionValuation bsm(ud(), call, PricingMethod::Analytical);
+    CHECK_THAT(pde.vega(), WithinRel(bsm.vega(), 1e-3));
+    CHECK_THAT(pde.rho(), WithinRel(bsm.rho(), 1e-3));
+}
+
 TEST_CASE("deep ITM American grid Greeks short-circuit to intrinsic", "[pde][greeks]") {
     // Spot far in the exercise region of an American put.
     const OptionValuation ov(

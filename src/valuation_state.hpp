@@ -178,6 +178,13 @@ struct ValuationState {
     std::optional<ValuationParams> params;
     std::string currency;
     std::optional<OptionType> option_type;
+    /// PDE far-field domain `(smin, smax)` inherited from the valuation this
+    /// one is a bump-and-revalue copy of. The domain is otherwise sized from
+    /// the spot, volatility, forward and maturity, so bumping any of them
+    /// would move the grid and its discretisation error would leak into the
+    /// finite-difference Greek. Unset for a valuation built by a caller. Set
+    /// at construction, before the engine is built.
+    std::optional<std::pair<double, double>> pde_domain = std::nullopt;
 
     [[nodiscard]] DateTime maturity() const { return maturity_of(spec); }
     [[nodiscard]] ExerciseType exercise_type() const { return exercise_type_of(spec); }

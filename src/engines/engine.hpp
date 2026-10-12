@@ -28,6 +28,12 @@ public:
     /// engines.
     [[nodiscard]] virtual std::optional<double> std_error() const { return std::nullopt; }
 
+    /// Far-field domain `(smin, smax)` of a grid engine's spatial grid, for
+    /// bump-and-revalue copies to reuse; `nullopt` for engines without one.
+    [[nodiscard]] virtual std::optional<std::pair<double, double>> grid_domain() const {
+        return std::nullopt;
+    }
+
     [[nodiscard]] virtual double delta() const { return unsupported("delta"); }
     [[nodiscard]] virtual double gamma() const { return unsupported("gamma"); }
     [[nodiscard]] virtual double vega() const { return unsupported("vega"); }
