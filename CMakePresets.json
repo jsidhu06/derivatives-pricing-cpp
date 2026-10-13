@@ -219,7 +219,12 @@
     {
       "name": "coverage",
       "inherits": "base-test",
-      "configurePreset": "coverage"
+      "configurePreset": "coverage",
+      "filter": {
+        "exclude": {
+          "label": "^threads$"
+        }
+      }
     },
     {
       "name": "ci-debug",
