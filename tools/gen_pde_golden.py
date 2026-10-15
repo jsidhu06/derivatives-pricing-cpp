@@ -72,7 +72,7 @@ def main() -> None:
                         time_steps=200, method=method, space=space, solver=solver,
                         option_type=ot, exercise=ex))
 
-    # Moneyness / dividend-yield / vol variants on the default CN spot grid.
+    # Moneyness / dividend-yield / vol variants on the CN spot grid.
     for spot, q, vol, ot, ex in itertools.product(
             [85.0, 110.0], [0.0, 0.03], [0.35], [C, P], [EU, AM]):
         rows.append(row(f"S{spot:g}_q{q:g}_v{vol:g}_{ot.name[0]}_{ex.name[:2]}", spot=spot,

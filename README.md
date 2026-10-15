@@ -63,7 +63,7 @@ int main() {
 
 ```text
 binomial  PV 8.7416  delta -0.5304
-PDE       PV 8.7382  delta -0.5306
+PDE       PV 8.7369  delta -0.5305
 implied vol 0.2200
 ```
 

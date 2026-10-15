@@ -93,6 +93,10 @@ std::optional<ValuationParams> resolve_params(PricingMethod method,
                 if (barrier != nullptr) {
                     return PdeParams::for_barriers(barrier->monitoring());
                 }
+                if (std::holds_alternative<PayoffSpec>(spec)) {
+                    // Custom payoffs keep the spot spatial grid for now.
+                    return PdeParams{.space_grid = PdeSpaceGrid::Spot};
+                }
                 return PdeParams{};
             case PricingMethod::Analytical:
                 return std::nullopt;

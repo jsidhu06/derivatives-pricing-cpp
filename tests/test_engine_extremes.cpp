@@ -484,7 +484,8 @@ TEST_CASE("high-vol long-dated PDE domains", "[pde][edge][domain]") {
     }
     SECTION("the spot grid keeps its 4x cap and warns") {
         const dp::test::WarningCapture capture;
-        (void)pde_pv(u, s, {.spot_steps = 400, .time_steps = 400});
+        (void)pde_pv(
+            u, s, {.spot_steps = 400, .time_steps = 400, .space_grid = PdeSpaceGrid::Spot});
         CHECK(capture.any_contains("standard deviations of ln"));
     }
     SECTION("an explicit smax_mult is the legacy domain; truncation warns, widening converges") {
@@ -506,7 +507,8 @@ TEST_CASE("high-vol long-dated PDE domains", "[pde][edge][domain]") {
         const auto short_u = bsm_market(0.20, kRate, 0.0);
         const auto short_s = spec(OptionType::Call, 100.0, ExerciseType::European, one_day);
         const dp::test::WarningCapture capture;
-        CHECK_THAT(pde_pv(short_u, short_s, {.smax_mult = 4.0}), WithinRel(0.247901, 1e-5));
+        CHECK_THAT(pde_pv(short_u, short_s, {.smax_mult = 4.0, .space_grid = PdeSpaceGrid::Spot}),
+                   WithinRel(0.247901, 1e-5));
         CHECK(capture.any_contains("nodes per standard deviation"));
     }
 }
