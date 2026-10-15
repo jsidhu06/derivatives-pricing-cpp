@@ -16,7 +16,7 @@
 #include <cmath>
 #include <cstddef>
 #include <span>
-#include <utility>
+#include <tuple>
 #include <vector>
 
 // Convergence-order tests: fit the log-log slope of the error against the
@@ -93,32 +93,43 @@ TEST_CASE("CRR tree converges at first order", "[convergence][binomial][slow]") 
 }
 
 TEST_CASE("Crank-Nicolson PDE converges at second order", "[convergence][pde][slow]") {
-    // Uniform spot grid on [0, 400] with spot_steps = time_steps = n: the spot
-    // and the strike are grid nodes at every n, so the payoff kink adds no
-    // oscillating interpolation error and Rannacher-smoothed Crank-Nicolson
-    // is O(h^2 + dt^2). With the default fitted domain the strike falls
-    // between nodes and the error is second order only on average.
-    const auto [type, strike] = GENERATE(std::pair{OptionType::Call, 100.0},
-                                         std::pair{OptionType::Put, 100.0},
-                                         std::pair{OptionType::Put, 80.0},
-                                         std::pair{OptionType::Call, 120.0});
-    CAPTURE(type, strike);
+    // smax_mult = 4 with spot_steps = time_steps = n: the spot and the strike
+    // are grid nodes at every n, so the payoff kink adds no oscillating
+    // interpolation error and Rannacher-smoothed Crank-Nicolson is
+    // O(h^2 + dt^2). The uniform Spot grid on [0, 400] has nodes at 80 and
+    // 120; the LogSpot grid on [25, 400] is centred on ln(100) with
+    // ln-spacing ln(16) / n, so 100 / sqrt(2) and 100 * sqrt(2) are nodes
+    // whenever n is a multiple of 8. With the default fitted domain the
+    // strike falls between nodes and the error is second order only on
+    // average.
+    const double root2 = std::sqrt(2.0);
+    const auto [grid, type, strike] =
+        GENERATE_COPY(std::tuple{PdeSpaceGrid::Spot, OptionType::Call, 100.0},
+                      std::tuple{PdeSpaceGrid::Spot, OptionType::Put, 100.0},
+                      std::tuple{PdeSpaceGrid::Spot, OptionType::Put, 80.0},
+                      std::tuple{PdeSpaceGrid::Spot, OptionType::Call, 120.0},
+                      std::tuple{PdeSpaceGrid::LogSpot, OptionType::Call, 100.0},
+                      std::tuple{PdeSpaceGrid::LogSpot, OptionType::Put, 100.0},
+                      std::tuple{PdeSpaceGrid::LogSpot, OptionType::Put, 100.0 / root2},
+                      std::tuple{PdeSpaceGrid::LogSpot, OptionType::Call, 100.0 * root2});
+    CAPTURE(grid, type, strike);
     const double exact =
         OptionValuation(ud(), spec(type, strike), PricingMethod::Analytical).present_value();
     std::vector<double> sizes;
     std::vector<double> errors;
     for (const int n : {200, 400, 800, 1600}) {
         const double pv =
-            OptionValuation(ud(),
-                            spec(type, strike),
-                            PricingMethod::PdeFd,
-                            PdeParams{.smax_mult = 4.0, .spot_steps = n, .time_steps = n})
+            OptionValuation(
+                ud(),
+                spec(type, strike),
+                PricingMethod::PdeFd,
+                PdeParams{.smax_mult = 4.0, .spot_steps = n, .time_steps = n, .space_grid = grid})
                 .present_value();
         sizes.push_back(n);
         errors.push_back(std::abs(pv - exact));
     }
     const double slope = log_log_slope(sizes, errors);
-    CAPTURE(errors, slope);  // measured: -2.00 for every case
+    CAPTURE(errors, slope);  // measured: -2.00 for every case on both grids
     // Expected order -2. Flatter fails a first- or mixed-order scheme (fully
     // implicit gives -1.4 to -1.7) or an error floor such as domain
     // truncation; steeper means the error crosses zero inside the range.

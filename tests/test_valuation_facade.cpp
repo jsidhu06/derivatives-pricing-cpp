@@ -16,6 +16,7 @@
 
 #include <chrono>
 #include <thread>
+#include <variant>
 #include <vector>
 
 using namespace dp;
@@ -133,6 +134,22 @@ TEST_CASE("params must match the pricing method", "[valuation]") {
         OptionValuation(ud(), vanilla(), PricingMethod::Binomial, BinomialParams{.num_steps = 0}),
         ValidationError,
         message_contains("num_steps must be >= 1"));
+}
+
+TEST_CASE("default PDE params use the log-spot grid, except for custom payoffs",
+          "[valuation][pde]") {
+    const auto grid = [](const OptionValuation& ov) {
+        return std::get<PdeParams>(*ov.params()).space_grid;
+    };
+    CHECK(grid(OptionValuation(ud(), vanilla(), PricingMethod::PdeFd)) == PdeSpaceGrid::LogSpot);
+    const PayoffSpec custom({.exercise_type = ExerciseType::European,
+                             .maturity = kMaturity,
+                             .payoff_fn = [](double s) { return s > 100.0 ? s - 100.0 : 0.0; },
+                             .currency = "USD"});
+    CHECK(grid(OptionValuation(ud(), custom, PricingMethod::PdeFd)) == PdeSpaceGrid::Spot);
+    // Explicit params are kept as passed.
+    CHECK(grid(OptionValuation(ud(), custom, PricingMethod::PdeFd, PdeParams{})) ==
+          PdeSpaceGrid::LogSpot);
 }
 
 TEST_CASE("describe() summarises the valuation", "[valuation]") {

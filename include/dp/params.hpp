@@ -70,7 +70,9 @@ struct PdeParams {
     PdeMethod method = PdeMethod::CrankNicolson;
     /// Initial Crank-Nicolson intervals replaced by implicit half-steps.
     int rannacher_steps = 2;
-    PdeSpaceGrid space_grid = PdeSpaceGrid::Spot;
+    /// When no params are passed, `PayoffSpec` valuations use the Spot grid
+    /// instead.
+    PdeSpaceGrid space_grid = PdeSpaceGrid::LogSpot;
     PdeEarlyExercise american_solver = PdeEarlyExercise::GaussSeidel;
     /// Hull-style control variate for American pricing. Rejected with
     /// discrete dividends: the PDE drops the spot on each ex-date, while the
