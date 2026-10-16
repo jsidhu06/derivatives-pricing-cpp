@@ -15,6 +15,7 @@
 
 #include <cmath>
 #include <cstddef>
+#include <numbers>
 #include <span>
 #include <tuple>
 #include <vector>
@@ -102,7 +103,7 @@ TEST_CASE("Crank-Nicolson PDE converges at second order", "[convergence][pde][sl
     // whenever n is a multiple of 8. With the default fitted domain the
     // strike falls between nodes and the error is second order only on
     // average.
-    const double root2 = std::sqrt(2.0);
+    constexpr double kRoot2 = std::numbers::sqrt2;
     const auto [grid, type, strike] =
         GENERATE_COPY(std::tuple{PdeSpaceGrid::Spot, OptionType::Call, 100.0},
                       std::tuple{PdeSpaceGrid::Spot, OptionType::Put, 100.0},
@@ -110,8 +111,8 @@ TEST_CASE("Crank-Nicolson PDE converges at second order", "[convergence][pde][sl
                       std::tuple{PdeSpaceGrid::Spot, OptionType::Call, 120.0},
                       std::tuple{PdeSpaceGrid::LogSpot, OptionType::Call, 100.0},
                       std::tuple{PdeSpaceGrid::LogSpot, OptionType::Put, 100.0},
-                      std::tuple{PdeSpaceGrid::LogSpot, OptionType::Put, 100.0 / root2},
-                      std::tuple{PdeSpaceGrid::LogSpot, OptionType::Call, 100.0 * root2});
+                      std::tuple{PdeSpaceGrid::LogSpot, OptionType::Put, 100.0 / kRoot2},
+                      std::tuple{PdeSpaceGrid::LogSpot, OptionType::Call, 100.0 * kRoot2});
     CAPTURE(grid, type, strike);
     const double exact =
         OptionValuation(ud(), spec(type, strike), PricingMethod::Analytical).present_value();
