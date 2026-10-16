@@ -495,7 +495,7 @@ TEST_CASE("high-vol long-dated PDE domains", "[pde][edge][domain]") {
             legacy = pde_pv(u, s, log_params(4.0));
             CHECK(any_pde_warning(capture));
         }
-        CHECK_THAT(legacy, WithinRel(61.300193, 1e-6));  // the legacy -9.1% value
+        CHECK_THAT(legacy, WithinRel(61.300379, 1e-6));  // the legacy -9.1% value
         // ln(1000) / 1.79 ~ 3.9 standard deviations clears the warning threshold.
         const dp::test::WarningCapture capture;
         const double wide = pde_pv(u, s, log_params(1000.0));

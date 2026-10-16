@@ -159,6 +159,26 @@ TEST_CASE("PDE American put agrees with the binomial tree", "[pde]") {
     CHECK(pde > pde_pv(u, spec(OptionType::Put), {.spot_steps = 400, .time_steps = 400}));
 }
 
+TEST_CASE("log-grid calls keep put-call parity at large sigma * sqrt(T)", "[pde][edge]") {
+    // The log-grid diffusion weight is fitted so the stencil carries V = S
+    // exactly. Unfitted, the call's forward part drifted by ~1.5e-4
+    // (sigma sqrt(T))^4 in the exponent: a parity gap of -0.66 at 80% vol
+    // over 10 years, and a 5-year call at 500% vol priced at 9.05.
+    const auto [vol, years] = GENERATE(std::pair{0.8, 10}, std::pair{2.0, 5}, std::pair{5.0, 5});
+    CAPTURE(vol, years);
+    const auto u = ud(100.0, vol, DiscountCurve::flat(0.01), {}, md(0.03));
+    const DateTime maturity = kPricingDate + std::chrono::days{365 * years};
+    const auto call = spec(OptionType::Call, ExerciseType::European, 70.0, maturity);
+    const auto put = spec(OptionType::Put, ExerciseType::European, 70.0, maturity);
+    const double c = pde_pv(u, call);
+    const double p = pde_pv(u, put);
+    const double t = static_cast<double>(years);
+    const double forward_leg = 100.0 * std::exp(-0.01 * t) - 70.0 * std::exp(-0.03 * t);
+    CHECK_THAT(c - p, WithinAbs(forward_leg, 2e-4));  // measured <= 8e-5 (time stepping)
+    CHECK_THAT(
+        c, WithinRel(OptionValuation(u, call, PricingMethod::Analytical).present_value(), 1e-3));
+}
+
 TEST_CASE("grid theta is negative and close to BSM", "[pde][greeks]") {
     const auto type = GENERATE(OptionType::Call, OptionType::Put);
     const auto u = ud();
