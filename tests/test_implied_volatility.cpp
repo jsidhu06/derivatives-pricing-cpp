@@ -457,6 +457,27 @@ TEST_CASE("numerical engines default to TOMS 748", "[implied_vol]") {
     CHECK(by_default.function_evaluations < newton.function_evaluations);
 }
 
+TEST_CASE("PDE implied vol round-trips long-dated European calls", "[implied_vol][pde]") {
+    // The bracket evaluates vol_upper = 5. Before the log-grid diffusion
+    // weight was fitted, the 5-year call priced at 9.05 there (BSM 95.12),
+    // below the target, so the solver widened upwards and returned a
+    // spurious 17.86, flagged well determined.
+    const int years = GENERATE(5, 10);
+    CAPTURE(years);
+    const auto call = vanilla(OptionType::Call,
+                              ExerciseType::European,
+                              100.0,
+                              kPricingDate + std::chrono::days{365 * years});
+    const auto valuation = [&](double vol) {
+        return OptionValuation(UnderlyingData(100.0, vol, md(0.03), {}, DiscountCurve::flat(0.01)),
+                               call,
+                               PricingMethod::PdeFd);
+    };
+    const auto result = implied_volatility(valuation(0.3).present_value(), valuation(0.2));
+    CHECK(result.well_determined);
+    CHECK_THAT(result.implied_vol, close_to(0.3, 0.0, 1e-6));
+}
+
 TEST_CASE("a quote at intrinsic value is reported as not well determined", "[implied_vol]") {
     // Regression: a deep in-the-money American put is worth its intrinsic
     // value at every small volatility, so the solve ends near zero vol. The

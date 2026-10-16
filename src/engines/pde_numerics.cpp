@@ -583,8 +583,25 @@ OperatorCoeffs spot_operator_coeffs(const ArrayXd& interior_spots,
 
 OperatorCoeffs log_operator_coeffs(
     double dz, double r, double q, double volatility, bool implicit_discounting, Index size) {
-    const double mu = r - q - 0.5 * volatility * volatility;
-    const double diffusion = (volatility * volatility) / (dz * dz);
+    const double a = 0.5 * volatility * volatility;
+    const double mu = r - q - a;
+    // Fitted diffusion: central differences applied to f(z) = e^z (that is, S)
+    // return e^z (a c + mu s) instead of e^z (a + mu), with
+    // c = 2 (cosh dz - 1) / dz^2 and s = sinh(dz) / dz. Solving for the
+    // diffusion weight makes the stencil exact on f = 1 and f = e^z, hence on
+    // every A + B S: the linear part of an option's value (its large-S
+    // asymptote, the forward leg of a call) is carried exactly and put-call
+    // parity holds on the grid. The change is O(dz^2), so the scheme stays
+    // second order; unfitted, the error grows like (sigma sqrt(T))^4 on the
+    // auto domain and destroys call prices at large sigma sqrt(T).
+    const double half_sinh = std::sinh(0.5 * dz) / (0.5 * dz);
+    const double c = half_sinh * half_sinh;
+    const double s = std::sinh(dz) / dz;
+    const double fitted = (a + mu * (1.0 - s)) / c;
+    // Positive unless high carry meets very low volatility on a coarse grid;
+    // fall back to the unfitted weight there.
+    const double a_dz = fitted > 0.0 ? fitted : a;
+    const double diffusion = 2.0 * a_dz / (dz * dz);
     const double drift = mu / dz;
     return {
         .gamma = ArrayXd::Constant(size, 0.5 * (diffusion - drift)),

@@ -193,6 +193,8 @@ struct OperatorCoeffs {
                                                   double volatility,
                                                   bool implicit_discounting);
 
+/// Constant-coefficient operator on a uniform ln(S) grid. The diffusion
+/// weight is fitted so the stencil is exact on f = 1 and f = S.
 [[nodiscard]] OperatorCoeffs log_operator_coeffs(
     double dz, double r, double q, double volatility, bool implicit_discounting, Index size);
 
