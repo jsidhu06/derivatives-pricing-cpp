@@ -1,4 +1,22 @@
 {
+  "parse": {
+    "additional_commands": {
+      "fetchcontent_declare": {
+        "pargs": 1,
+        "flags": ["SYSTEM", "EXCLUDE_FROM_ALL", "OVERRIDE_FIND_PACKAGE"],
+        "kwargs": {
+          "GIT_REPOSITORY": 1,
+          "GIT_TAG": 1,
+          "GIT_SHALLOW": 1,
+          "SOURCE_DIR": 1,
+          "SOURCE_SUBDIR": 1,
+          "URL": 1,
+          "URL_HASH": 1,
+          "FIND_PACKAGE_ARGS": "*"
+        }
+      }
+    }
+  },
   "format": {
     "line_width": 100,
     "tab_size": 4,

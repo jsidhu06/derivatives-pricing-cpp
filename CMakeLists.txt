@@ -17,7 +17,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+# Only as the top-level project: a consumer's build type is the consumer's choice.
+if(PROJECT_IS_TOP_LEVEL AND NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     message(STATUS "No build type selected, defaulting to Release")
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
@@ -40,6 +41,7 @@ set_property(CACHE DP_SANITIZER PROPERTY STRINGS "address,undefined" "thread")
 option(DP_ENABLE_COVERAGE "Instrument the library and tests for line coverage (gcov)" OFF)
 option(DP_ENABLE_CLANG_TIDY "Run clang-tidy as part of the build" OFF)
 option(DP_ENABLE_LTO "Enable link-time optimisation for Release builds" OFF)
+option(DP_INSTALL "Generate install rules and the CMake package config" ${PROJECT_IS_TOP_LEVEL})
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(CompilerWarnings)
@@ -47,6 +49,7 @@ include(Sanitizers)
 include(Coverage)
 include(StaticAnalysis)
 include(Dependencies)
+include(GNUInstallDirs)
 
 # ---------------------------------------------------------------------------
 # Library
@@ -85,13 +88,19 @@ target_sources(
 )
 
 target_include_directories(
-    derivatives_pricing PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-                               $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/generated>
+    derivatives_pricing
+    PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+           $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/generated>
+           $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
+# Eigen is in the public headers. The header-only private dependencies are compiled into the
+# library, so they are build-only (BUILD_INTERFACE) and never reach an installed consumer.
 target_link_libraries(
-    derivatives_pricing PUBLIC Eigen3::Eigen Boost::math PRIVATE pcg::pcg spdlog::spdlog
+    derivatives_pricing PUBLIC Eigen3::Eigen
+    PRIVATE $<BUILD_INTERFACE:Boost::math> $<BUILD_INTERFACE:pcg::pcg>
+            $<BUILD_INTERFACE:dp_spdlog_headers> Threads::Threads
 )
 
 target_compile_features(derivatives_pricing PUBLIC cxx_std_20)
@@ -108,6 +117,13 @@ if(DP_ENABLE_LTO)
     else()
         message(WARNING "LTO requested but not supported: ${dp_ipo_message}")
     endif()
+endif()
+
+# ---------------------------------------------------------------------------
+# Install and package config (find_package(derivatives_pricing))
+# ---------------------------------------------------------------------------
+if(DP_INSTALL)
+    include(Install)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -145,6 +161,8 @@ endif()
 message(STATUS "")
 message(STATUS "derivatives_pricing ${PROJECT_VERSION}")
 message(STATUS "  Build type:        ${CMAKE_BUILD_TYPE}")
+message(STATUS "  Eigen:             ${DP_EIGEN_SOURCE}")
+message(STATUS "  Install rules:     ${DP_INSTALL}")
 message(STATUS "  Compiler:          ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
 message(STATUS "  Tests:             ${DP_BUILD_TESTS}")
 message(STATUS "  Examples:          ${DP_BUILD_EXAMPLES}")

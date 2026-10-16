@@ -151,6 +151,39 @@ jobs:
       - name: Build (runs clang-tidy)
         run: cmake --build --preset ci-tidy --parallel
 
+  package:
+    name: install and consume (gcc-13)
+    runs-on: ubuntu-24.04
+    env:
+      CC: gcc-13
+      CXX: g++-13
+    steps:
+      - uses: actions/checkout@v4
+      # Eigen comes from the system here, as it would for most consumers of an
+      # installed package.
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build g++-13 libeigen3-dev
+      - name: Build and install the library
+        run: |
+          cmake -S . -B build/package -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DDP_BUILD_TESTS=OFF -DDP_BUILD_EXAMPLES=OFF
+          cmake --build build/package --parallel
+          cmake --install build/package --prefix "$RUNNER_TEMP/dp"
+      - name: Consume with find_package
+        run: |
+          cmake -S tests/package -B build/consumer-find -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/dp"
+          cmake --build build/consumer-find
+          ./build/consumer-find/dp_package_test
+      - name: Consume with FetchContent
+        run: |
+          cmake -S tests/package -B build/consumer-fetch -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DDP_CONSUME=fetchcontent -DDP_SOURCE_DIR="$GITHUB_WORKSPACE"
+          cmake --build build/consumer-fetch --parallel
+          ./build/consumer-fetch/dp_package_test
+
   pre-commit:
     name: pre-commit
     runs-on: ubuntu-24.04
