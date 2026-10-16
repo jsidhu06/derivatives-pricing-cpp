@@ -172,7 +172,7 @@ TEST_CASE("log-grid calls keep put-call parity at large sigma * sqrt(T)", "[pde]
     const auto put = spec(OptionType::Put, ExerciseType::European, 70.0, maturity);
     const double c = pde_pv(u, call);
     const double p = pde_pv(u, put);
-    const double t = static_cast<double>(years);
+    const auto t = static_cast<double>(years);
     const double forward_leg = 100.0 * std::exp(-0.01 * t) - 70.0 * std::exp(-0.03 * t);
     CHECK_THAT(c - p, WithinAbs(forward_leg, 2e-4));  // measured <= 8e-5 (time stepping)
     CHECK_THAT(
