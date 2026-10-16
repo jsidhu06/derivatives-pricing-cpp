@@ -1,0 +1,9 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+# Eigen appears in the public headers; Threads is a link dependency of the static library.
+find_dependency(Eigen3 3.4 NO_MODULE)
+find_dependency(Threads)
+
+include("${CMAKE_CURRENT_LIST_DIR}/derivatives_pricingTargets.cmake")
+check_required_components(derivatives_pricing)

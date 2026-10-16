@@ -71,9 +71,51 @@ More in [`examples/`](examples): the same contract across all four engines
 with Greeks, barrier options, Monte Carlo with standard errors, and an
 implied-volatility smile. They build with the library as `dp_example_*`.
 
+## Using the library in your project
+
+The library builds as a static library and exports the CMake target
+`dp::derivatives_pricing`. Include `dp/dp.hpp` for the whole API.
+
+**FetchContent.** CMake fetches and builds the library with your project;
+nothing needs to be installed:
+
+```cmake
+include(FetchContent)
+FetchContent_Declare(
+    derivatives_pricing
+    GIT_REPOSITORY https://github.com/jsidhu06/derivatives-pricing-cpp.git
+    GIT_TAG v0.1.0
+)
+FetchContent_MakeAvailable(derivatives_pricing)
+
+target_link_libraries(your_app PRIVATE dp::derivatives_pricing)
+```
+
+The library's tests, examples and install rules are off when it is built
+inside another project.
+
+**Installed package.** Build and install once, then use `find_package`:
+
+```bash
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DDP_BUILD_TESTS=OFF
+cmake --build build
+cmake --install build --prefix /path/to/prefix
+```
+
+```cmake
+find_package(derivatives_pricing 0.1 REQUIRED)
+target_link_libraries(your_app PRIVATE dp::derivatives_pricing)
+```
+
+Configure your project with `-DCMAKE_PREFIX_PATH=/path/to/prefix`. Eigen is
+part of the public API, so an installed package also needs Eigen 3.4 where
+`find_package(Eigen3)` can find it (`libeigen3-dev` on Debian and Ubuntu,
+`brew install eigen` on macOS). Boost.Math, PCG and spdlog are compiled into
+the library and are not needed by consumers.
+
 ## Validation
 
-The test suite has 355 test cases and runs in CI on GCC 13 and Clang 18,
+The test suite has 358 test cases and runs in CI on GCC 13 and Clang 18,
 under AddressSanitizer, UndefinedBehaviorSanitizer and ThreadSanitizer, with
 clang-tidy and `-Werror`.
 
@@ -98,7 +140,8 @@ clang-tidy and `-Werror`.
 
 Requirements: CMake 3.25 or later, Ninja and a C++20 compiler (GCC 13+ or
 Clang 17+). Dependencies are fetched and pinned by `FetchContent` on first
-configure: Eigen 3.4, Boost.Math 1.86, spdlog 1.15, Catch2 3.8, and Google
+configure: Eigen 3.4 (an installed Eigen 3.4 is used instead when CMake finds
+one), Boost.Math 1.86, spdlog 1.15 (header-only), Catch2 3.8, and Google
 Benchmark 1.9 when benchmarks are enabled.
 
 ```bash
@@ -164,6 +207,14 @@ benchmark, to check that they run; shared runners are too noisy for timings.
   numbers.
 
 Asian options are out of scope for the first version.
+
+## Contributing
+
+Found a bug, or a price that looks wrong? Please open an
+[issue](https://github.com/jsidhu06/derivatives-pricing-cpp/issues) with a
+minimal example, or a pull request with the fix and a test that covers it.
+CI runs the full suite, the sanitizers, clang-tidy and the formatting checks
+on every pull request.
 
 ## License
 
